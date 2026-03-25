@@ -73,19 +73,6 @@ export class SessionRegistry {
     await writeFile(this.filePath(session.id), `${JSON.stringify(session, null, 2)}\n`, "utf8");
   }
 
-  async closeSession(id: string): Promise<SessionRecord | null> {
-    const session = await this.getSession(id);
-    if (!session) {
-      return null;
-    }
-
-    const now = new Date().toISOString();
-    session.status = "closed";
-    session.updatedAt = now;
-    await this.saveSession(session);
-    return session;
-  }
-
   async touchSessionAccess(session: SessionRecord): Promise<SessionRecord> {
     const now = new Date().toISOString();
     session.lastAccessAt = now;

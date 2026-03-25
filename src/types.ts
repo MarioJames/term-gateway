@@ -4,6 +4,39 @@ export interface TtydConfig {
   upstreamUrl: string;
 }
 
+export type CloseTargetStatus =
+  | "closed"
+  | "failed"
+  | "not_found"
+  | "skipped"
+  | "unsupported";
+
+export interface CloseTargetResult {
+  target: "tmux" | "ttyd";
+  attempted: boolean;
+  status: CloseTargetStatus;
+  message: string;
+  command?: string;
+  pid?: number;
+  signal?: "SIGTERM" | "SIGKILL";
+  tmuxSession?: string;
+  port?: number;
+  upstreamUrl?: string;
+}
+
+export interface CloseSessionResult {
+  requestedAt: string;
+  sessionId: string;
+  registryStatus: "closed";
+  registryUpdatedAt: string;
+  tmux: CloseTargetResult;
+  ttyd: CloseTargetResult;
+  summary: {
+    closedAnyTarget: boolean;
+    hasFailures: boolean;
+  };
+}
+
 export interface SessionOpenTokenRecord {
   hash: string;
   expiresAt: string | null;

@@ -10,6 +10,7 @@ import {
   signSessionCookie,
   verifySignedSessionCookie
 } from "./auth.js";
+import { closeSessionResources } from "./closeSession.js";
 import { loadConfig } from "./config.js";
 import { renderSessionPage, renderTtydUnavailablePage, renderUnauthorizedPage } from "./html.js";
 import { SessionRegistry, toSessionView } from "./registry.js";
@@ -87,15 +88,23 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
   const closeMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/close$/);
   if (method === "POST" && closeMatch) {
     const sessionId = closeMatch[1]!;
-    const session = await registry.closeSession(sessionId);
+    const session = await registry.getSession(sessionId);
     if (!session) {
       sendJson(response, 404, { error: "not_found", message: "Session not found" });
       return;
     }
 
+    const closeResult = await closeSessionResources(session);
+    session.status = "closed";
+    session.updatedAt = closeResult.registryUpdatedAt;
+    await registry.saveSession(session);
+
     sendJson(response, 200, {
       session: toSessionView(session),
-      message: "Session registry entry marked as closed. tmux/ttyd are not terminated in the MVP."
+      closeResult,
+      message: closeResult.summary.closedAnyTarget
+        ? "Session marked as closed and at least one backing resource was terminated."
+        : "Session marked as closed. No backing resource was terminated."
     });
     return;
   }

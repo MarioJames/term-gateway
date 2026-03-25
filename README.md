@@ -10,6 +10,7 @@
 - `GET /open/:id/:token` one-time token -> cookie 入口
 - `GET /s/:id` 只读 terminal 页面，可嵌入真实 ttyd 视图
 - `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
+- `POST /api/sessions/:id/close` 人工触发的真实 tmux / ttyd 关闭
 - `ttyd.enabled=false` 或 upstream 未配置时的优雅降级
 
 ## 明确未实现
@@ -144,7 +145,27 @@ data/
 
 ### `POST /api/sessions/:id/close`
 
-手动将会话标记为 `closed`。MVP 仅更新 registry，不会实际关闭 tmux / ttyd。
+手动触发关闭，并始终把 registry 状态更新为 `closed`。
+
+- 如果 `tmuxSession` 存在，会尝试执行真实 `tmux kill-session -t <name>`
+- 如果 `ttyd.enabled=true`，会尝试识别并停止本机 ttyd 进程
+- ttyd 只会在“目标可可靠识别”时才会被杀掉；识别不到时会返回 `unsupported` 或 `not_found`
+- 关闭结果会结构化返回，不会因为单项失败把整个请求直接变成 500
+
+结构化结果状态：
+
+- `closed`: 目标已被关闭
+- `not_found`: 没找到对应目标
+- `unsupported`: 当前条件下无法可靠识别目标，因此拒绝猜测性关闭
+- `skipped`: 当前 session 不需要关闭该类资源
+- `failed`: 已尝试关闭，但执行失败
+
+ttyd 识别策略当前是保守模式：
+
+- upstream 必须是本机地址（`127.0.0.1` / `localhost` / `::1`）
+- 进程名必须能识别为 `ttyd`
+- 命令行里必须能匹配到与 session 配置一致的端口参数（如 `-p 7681`）
+- 如果出现多个候选进程，则返回 `unsupported`
 
 ### `GET /open/:id/:token`
 
@@ -204,5 +225,5 @@ curl -i http://127.0.0.1:4317/api/sessions/<session_id>/stream/ \
 ## 后续建议
 
 - 接入 Cloudflare Tunnel / 独立域名
-- 增加人工确认后的真实关闭能力
 - 如果需要真正的只读约束，再单独评估 ttyd / 前端层的输入限制方案
+- 如果要让 ttyd close 更可靠，可以在 session 元数据中额外记录受控 pid 或启动元信息
