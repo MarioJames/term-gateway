@@ -23,7 +23,7 @@ import {
 import type { CreateSessionInput, SessionRecord } from "./types.js";
 
 const config = loadConfig();
-const registry = new SessionRegistry(config.registryDir);
+const registry = new SessionRegistry(config.databasePath, config.openTokenTtlSeconds);
 
 await registry.init();
 
@@ -53,7 +53,8 @@ server.on("upgrade", async (request, socket, head) => {
 
 server.listen(config.port, config.host, () => {
   console.log(`term-gateway listening on ${config.publicBaseUrl}`);
-  console.log(`registry directory: ${config.registryDir}`);
+  console.log(`database path: ${config.databasePath}`);
+  console.log(`open token ttl seconds: ${config.openTokenTtlSeconds}`);
 });
 
 async function routeRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -154,17 +155,19 @@ async function handleOpenLink(response: ServerResponse, sessionId: string, rawTo
 
   const suppliedHash = hashOpenToken(rawToken, config.sessionSecret);
   const tokenMatches = safeCompare(session.openToken.hash, suppliedHash);
+  const tokenExpiresAt = session.openToken.expiresAt;
+  const tokenExpiryTime = tokenExpiresAt === null ? Number.NaN : Date.parse(tokenExpiresAt);
+  const tokenExpired = Number.isNaN(tokenExpiryTime) || Date.now() > tokenExpiryTime;
 
-  if (!tokenMatches || session.openToken.consumedAt !== null) {
+  if (!tokenMatches || tokenExpired) {
     sendJson(response, 403, {
       error: "forbidden",
-      message: "Open token is invalid or has already been consumed"
+      message: "Open token is invalid or has expired"
     });
     return;
   }
 
   const now = new Date().toISOString();
-  session.openToken.consumedAt = now;
   session.lastAccessAt = now;
   session.updatedAt = now;
   await registry.saveSession(session);

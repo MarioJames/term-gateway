@@ -5,9 +5,10 @@ export interface AppConfig {
   port: number;
   publicBaseUrl: string;
   sessionSecret: string;
-  registryDir: string;
+  databasePath: string;
   cookieName: string;
   cookieSecure: boolean;
+  openTokenTtlSeconds: number;
 }
 
 function parsePort(rawValue: string | undefined, fallback: number): number {
@@ -23,6 +24,19 @@ function parsePort(rawValue: string | undefined, fallback: number): number {
   return port;
 }
 
+function parsePositiveInteger(rawValue: string | undefined, fallback: number, name: string): number {
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name} value: ${rawValue}`);
+  }
+
+  return parsed;
+}
+
 function parseBoolean(rawValue: string | undefined, fallback: boolean): boolean {
   if (rawValue === undefined) {
     return fallback;
@@ -31,17 +45,26 @@ function parseBoolean(rawValue: string | undefined, fallback: boolean): boolean 
   return rawValue.toLowerCase() === "true";
 }
 
+function resolveDatabasePath(rawValue: string | undefined): string {
+  const databasePath = rawValue ?? "./data/term-gateway.sqlite";
+  return databasePath === ":memory:" ? databasePath : resolve(process.cwd(), databasePath);
+}
+
 export function loadConfig(): AppConfig {
   const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? "http://127.0.0.1:4317").replace(/\/+$/, "");
-  const registryDir = process.env.REGISTRY_DIR ?? "./data/sessions";
 
   return {
     host: process.env.HOST ?? "127.0.0.1",
     port: parsePort(process.env.PORT, 4317),
     publicBaseUrl,
     sessionSecret: process.env.SESSION_SECRET ?? "change-me",
-    registryDir: resolve(process.cwd(), registryDir),
+    databasePath: resolveDatabasePath(process.env.DATABASE_PATH),
     cookieName: process.env.COOKIE_NAME ?? "term_gateway_session",
-    cookieSecure: parseBoolean(process.env.COOKIE_SECURE, false)
+    cookieSecure: parseBoolean(process.env.COOKIE_SECURE, false),
+    openTokenTtlSeconds: parsePositiveInteger(
+      process.env.OPEN_TOKEN_TTL_SECONDS,
+      30 * 60,
+      "OPEN_TOKEN_TTL_SECONDS"
+    )
   };
 }

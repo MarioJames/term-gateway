@@ -21,7 +21,7 @@
 ### 1. 会话与访问模型
 - 创建 Web Terminal 时，系统自动生成一个 **opaque terminal_session_id**
 - URL 中直接带上这个 session，不让用户手动输入
-- 访问时再配合一次性 token 进入
+- 访问时再配合限时有效 token 进入
 - 第一版先不接 Cloudflare Access
 - 第一版先不做自动 TTL / 自动回收
 
@@ -32,7 +32,7 @@
 
 ### 3. 生命周期模型
 - 第一版 **不自动清理**
-- 本地维护一个 PTY registry
+- 本地维护一个 PTY session registry
 - 后续按固定周期（例如每小时）由主助手询问：
   - 当前还有哪些 PTY
   - 哪些看起来可以关闭
@@ -42,9 +42,9 @@
 - 先不接 Cloudflare Access
 - 但访问仍需要：
   - `terminal_session_id`
-  - one-time token
+  - 限时有效 open token
 - 推荐模式：
-  - 首次访问 `open` 链接带 one-time token
+  - 首次访问 `open` 链接带限时 token
   - gateway 验证后换成 session cookie
   - 后续访问通过 cookie
 - 不做长期 query token 直连终端
@@ -63,21 +63,12 @@
 - 为后续 ttyd 反代留好接口
 
 ### B. 本地持久化
-使用本地文件存储，不上数据库。
-建议结构：
-
-```text
-registry/
-  sessions/
-    <terminal_session_id>.json
-```
-
-或者：
+使用 SQLite 文件，不上复杂 ORM。
+默认结构：
 
 ```text
 data/
-  sessions/
-    <terminal_session_id>.json
+  term-gateway.sqlite
 ```
 
 ### C. 会话数据结构
@@ -102,7 +93,7 @@ data/
   "publicPath": "/s/<id>",
   "openToken": {
     "hash": "...",
-    "expiresAt": null,
+    "expiresAt": "2026-03-25T09:30:00.000Z",
     "consumedAt": null
   }
 }
@@ -116,17 +107,17 @@ data/
   - 返回 `terminal_session_id` 和首访链接
 
 - `GET /api/sessions`
-  - 列出当前 PTY registry
+  - 列出当前 SQLite registry
 
 - `GET /api/sessions/:id`
   - 获取单个会话详情
 
 - `POST /api/sessions/:id/close`
   - 手动标记关闭
-  - 第一版可以只更新 registry，不强制真的 kill tmux/ttyd
+  - 把数据库里的 session 状态更新为 `closed`
 
 - `GET /open/:id/:token`
-  - one-time token 入口
+  - 限时 token 入口
   - 验证成功后换 session cookie，再跳转 `/s/:id`
 
 - `GET /s/:id`
@@ -152,9 +143,10 @@ HOST=127.0.0.1
 PORT=4317
 PUBLIC_BASE_URL=http://127.0.0.1:4317
 SESSION_SECRET=change-me
-REGISTRY_DIR=./data/sessions
+DATABASE_PATH=./data/term-gateway.sqlite
 COOKIE_NAME=term_gateway_session
 COOKIE_SECURE=false
+OPEN_TOKEN_TTL_SECONDS=1800
 ```
 
 ---
@@ -166,7 +158,6 @@ COOKIE_SECURE=false
 - 自动清理 tmux / ttyd
 - 完整用户体系
 - 多人权限模型
-- 数据库
 - 真正的远程写入控制
 - 高级审计系统
 
@@ -181,15 +172,15 @@ COOKIE_SECURE=false
 - 加 README
 
 ### 第 2 步：registry
-- 实现 session 文件读写
+- 实现 SQLite session 读写
 - 实现 create/list/get/close
-- 确保数据目录自动创建
+- 确保数据库目录与 schema 自动创建
 
 ### 第 3 步：token + cookie
-- 生成 one-time token
+- 生成限时 open token
 - 存 hash，不存明文 token
 - 实现 `/open/:id/:token`
-- 验证成功后写 cookie，并标记 `consumedAt`
+- 验证成功后写 cookie，并校验 `expiresAt`
 
 ### 第 4 步：只读页面
 - `/s/:id` 页面显示会话信息
@@ -257,9 +248,9 @@ COOKIE_SECURE=false
 
 - 仓库中有清晰 README
 - 有可运行的最小 Node.js/TypeScript 服务
-- 有 session registry
+- 有 SQLite-backed session registry
 - 有 create/list/get/close 基础 API
-- 有 one-time token -> cookie 的入口骨架
+- 有限时 token -> cookie 的入口
 - 有只读 terminal 页面占位
 - 有 ttyd 接入占位层
 - 有 `.env.example`

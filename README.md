@@ -1,13 +1,13 @@
 # Term Gateway MVP
 
-一个按 `PLAN.md` 持续增量实现的只读 Web PTY 观察网关。当前版本已经支持本地持久化、one-time token -> cookie 首访入口，以及在配置了 ttyd upstream 时通过同源代理嵌入真实终端视图。
+一个按 `PLAN.md` 持续增量实现的只读 Web PTY 观察网关。当前版本已经支持 SQLite 持久化、限时 open token -> cookie 首访入口，以及在配置了 ttyd upstream 时通过同源代理嵌入真实终端视图。
 
 ## 当前能力
 
 - Node.js / TypeScript 服务骨架
-- 本地文件 session registry
+- SQLite session / token 持久化
 - `create/list/get/close` 基础 API
-- `GET /open/:id/:token` one-time token -> cookie 入口
+- `GET /open/:id/:token` 限时 token -> cookie 入口
 - `GET /s/:id` 只读 terminal 页面，可嵌入真实 ttyd 视图
 - `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
 - `POST /api/sessions/:id/close` 人工触发的真实 tmux / ttyd 关闭
@@ -19,7 +19,6 @@
 - Cloudflare Access
 - 自动 TTL / 自动清理
 - 自动关闭 tmux / ttyd
-- 数据库
 - 网页输入控制
 
 ## 环境要求
@@ -42,9 +41,10 @@ HOST=127.0.0.1
 PORT=4317
 PUBLIC_BASE_URL=http://127.0.0.1:4317
 SESSION_SECRET=change-me
-REGISTRY_DIR=./data/sessions
+DATABASE_PATH=./data/term-gateway.sqlite
 COOKIE_NAME=term_gateway_session
 COOKIE_SECURE=false
+OPEN_TOKEN_TTL_SECONDS=1800
 ```
 
 ## Cloudflare Tunnel 部署
@@ -66,9 +66,10 @@ HOST=127.0.0.1
 PORT=4317
 PUBLIC_BASE_URL=https://term.example.com
 SESSION_SECRET=replace-with-a-long-random-secret
-REGISTRY_DIR=./data/sessions
+DATABASE_PATH=./data/term-gateway.sqlite
 COOKIE_NAME=term_gateway_session
 COOKIE_SECURE=true
+OPEN_TOKEN_TTL_SECONDS=1800
 ```
 
 关键点：
@@ -76,6 +77,8 @@ COOKIE_SECURE=true
 - `PUBLIC_BASE_URL` 必须使用最终公网地址 `https://term.example.com`
 - `COOKIE_SECURE=true`，因为公网访问走 HTTPS
 - `HOST` 继续保持 `127.0.0.1`，由 `cloudflared` 在同机回源到本地服务
+- `DATABASE_PATH` 指向 SQLite 文件；服务启动时会自动建库建表
+- `OPEN_TOKEN_TTL_SECONDS` 默认 1800 秒，也就是 30 分钟
 
 ### 推荐的 cloudflared ingress 片段
 
@@ -157,15 +160,13 @@ npm run start
 
 ## 数据落盘
 
-session registry 保存在：
+SQLite 数据库默认保存在：
 
 ```text
-data/
-  sessions/
-    <terminal_session_id>.json
+data/term-gateway.sqlite
 ```
 
-服务会自动创建目录。
+服务会自动创建数据库目录和基础 schema。
 
 ## API
 
@@ -209,7 +210,7 @@ data/
     "lastAccessAt": null,
     "publicPath": "/s/opaque_random_id",
     "openToken": {
-      "expiresAt": null,
+      "expiresAt": "2026-03-25T09:30:00.000Z",
       "consumedAt": null
     }
   },
@@ -219,7 +220,7 @@ data/
 
 ### `GET /api/sessions`
 
-列出当前 registry 中的所有会话。
+列出当前数据库中的所有会话。
 
 ### `GET /api/sessions/:id`
 
@@ -227,7 +228,7 @@ data/
 
 ### `POST /api/sessions/:id/close`
 
-手动触发关闭，并始终把 registry 状态更新为 `closed`。
+手动触发关闭，并始终把数据库中的 session 状态更新为 `closed`。
 
 - 如果 `tmuxSession` 存在，会尝试执行真实 `tmux kill-session -t <name>`
 - 如果 `ttyd.enabled=true`，会尝试识别并停止本机 ttyd 进程
@@ -251,11 +252,14 @@ ttyd 识别策略当前是保守模式：
 
 ### `GET /open/:id/:token`
 
-校验 one-time token，成功后：
+校验限时 token。满足以下条件时成功：
 
-- 标记 token 已消费
+- token hash 正确
+- 当前时间未超过 `openToken.expiresAt`
 - 写入签名 cookie
 - 302 跳转到 `/s/:id`
+
+默认 TTL 为 1800 秒，也就是 30 分钟，可通过 `OPEN_TOKEN_TTL_SECONDS` 配置。
 
 ### `GET /s/:id`
 

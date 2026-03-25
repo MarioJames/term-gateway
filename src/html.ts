@@ -205,8 +205,8 @@ export function renderUnauthorizedPage(sessionId: string): string {
   </head>
   <body>
     <article>
-      <h1>Session access requires the one-time open link</h1>
-      <p>Use the original <code>/open/${escapeHtml(sessionId)}/&lt;token&gt;</code> link first so the gateway can exchange it for a signed session cookie.</p>
+      <h1>Session access requires the time-limited open link</h1>
+      <p>Use the original <code>/open/${escapeHtml(sessionId)}/&lt;token&gt;</code> link before it expires so the gateway can exchange it for a signed session cookie.</p>
     </article>
   </body>
 </html>`;
