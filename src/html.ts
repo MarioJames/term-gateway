@@ -15,28 +15,19 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function renderRow(label: string, value: string): string {
-  return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`;
-}
-
 export function renderSessionPage(session: SessionRecord, options: SessionPageOptions): string {
   const terminalSection = options.ttydAvailable
-    ? `<section class="terminal-shell">
-        <div class="terminal-meta">
-          <strong>Live terminal view</strong>
-          <span>${escapeHtml(options.ttydStatusMessage)}</span>
-        </div>
+    ? `<main class="terminal-root">
         <iframe
           src="${escapeHtml(options.streamUrl)}"
           title="Terminal stream ${escapeHtml(session.id)}"
           loading="lazy"
           referrerpolicy="same-origin"
         ></iframe>
-      </section>`
-    : `<section class="panel">
-        <strong>Terminal unavailable</strong>
+      </main>`
+    : `<main class="status-root">
         <p>${escapeHtml(options.ttydStatusMessage)}</p>
-      </section>`;
+      </main>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -46,131 +37,70 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
     <title>Term Gateway ${escapeHtml(session.id)}</title>
     <style>
       :root {
-        color-scheme: light;
+        color-scheme: dark;
         font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
-        background: linear-gradient(180deg, #f7f3ea 0%, #ece4d8 100%);
-        color: #1f1a14;
+        background: #111;
+        color: #e8e8e8;
       }
       * { box-sizing: border-box; }
+      html {
+        width: 100%;
+        height: 100%;
+        background: #111;
+      }
       body {
         margin: 0;
+        width: 100vw;
+        min-width: 100vw;
+        height: 100vh;
         min-height: 100vh;
-        padding: 32px 20px;
-      }
-      main {
-        max-width: 1180px;
-        margin: 0 auto;
-        background: rgba(255, 252, 247, 0.92);
-        border: 1px solid #c9b99f;
-        border-radius: 20px;
-        padding: 28px;
-        box-shadow: 0 20px 60px rgba(72, 54, 32, 0.12);
-      }
-      .badge {
-        display: inline-block;
-        margin-bottom: 16px;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: #2a5c45;
-        color: #f7f3ea;
-        font-size: 13px;
-      }
-      h1 {
-        margin: 0 0 8px;
-        font-size: 30px;
-      }
-      p {
-        line-height: 1.6;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 24px 0;
-      }
-      th, td {
-        padding: 12px 10px;
-        border-bottom: 1px solid #ddcfbb;
-        text-align: left;
-        vertical-align: top;
-      }
-      th {
-        width: 220px;
-        color: #65533f;
-      }
-      .panel {
-        padding: 16px;
-        border-radius: 16px;
-        background: #f2eadf;
-        border: 1px solid #d4c2ab;
-      }
-      .terminal-shell {
-        margin-top: 24px;
+        min-height: 100dvh;
+        background: #111;
         overflow: hidden;
-        border-radius: 18px;
-        border: 1px solid #c3b49e;
-        background: #17120f;
       }
-      .terminal-meta {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 18px;
-        background: linear-gradient(90deg, #35271d 0%, #574131 100%);
-        color: #f5ead9;
-        font-size: 14px;
+      .terminal-root,
+      .status-root {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        padding-left: env(safe-area-inset-left, 0px);
+        background: #111;
+      }
+      .status-root {
+        display: grid;
+        place-items: center;
+        padding-inline: max(16px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+        padding-top: max(16px, env(safe-area-inset-top, 0px));
+        padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+      }
+      .status-root p {
+        margin: 0;
+        max-width: 48rem;
+        line-height: 1.5;
       }
       iframe {
         display: block;
         width: 100%;
-        min-height: 66vh;
+        height: 100%;
         border: 0;
         background: #111;
       }
-      code, pre {
-        font-family: inherit;
-      }
-      pre {
-        margin: 12px 0 0;
-        padding: 14px;
-        overflow: auto;
-        border-radius: 12px;
-        background: #16120d;
-        color: #efe3d0;
-      }
-      a {
-        color: #8f3d1f;
+      @supports (height: 100svh) {
+        body,
+        .terminal-root,
+        .status-root {
+          height: 100svh;
+        }
       }
     </style>
   </head>
   <body>
-    <main>
-      <div class="badge">Read-only terminal session</div>
-      <h1>${escapeHtml(session.taskName)}</h1>
-      <p>This session is intentionally read-only in the MVP. To run commands, send instructions through chat instead of typing in the browser.</p>
-
-      <table>
-        <tbody>
-          ${renderRow("Session ID", session.id)}
-          ${renderRow("Agent", session.agent)}
-          ${renderRow("Mode", session.mode)}
-          ${renderRow("Status", session.status)}
-          ${renderRow("tmux session", session.tmuxSession)}
-          ${renderRow("Public path", session.publicPath)}
-          ${renderRow("Created at", session.createdAt)}
-          ${renderRow("Updated at", session.updatedAt)}
-          ${renderRow("Last access at", session.lastAccessAt ?? "never")}
-        </tbody>
-      </table>
-
-      ${terminalSection}
-
-      <section class="panel">
-        <strong>Gateway note</strong>
-        <p>This UI remains read-only in product intent. Commands should still be sent through chat; this page only mirrors the ttyd session when one is configured upstream.</p>
-        <p>Embedded stream path: <a href="${escapeHtml(options.streamUrl)}">${escapeHtml(options.streamUrl)}</a></p>
-        <pre>${escapeHtml(JSON.stringify(session.ttyd, null, 2))}</pre>
-      </section>
-    </main>
+    ${terminalSection}
   </body>
 </html>`;
 }
@@ -183,22 +113,43 @@ export function renderUnauthorizedPage(sessionId: string): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Unauthorized</title>
     <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
+        background: #111;
+        color: #e8e8e8;
+      }
+      html {
+        width: 100%;
+        height: 100%;
+        background: #111;
+      }
       body {
         margin: 0;
         min-height: 100vh;
+        min-height: 100dvh;
         display: grid;
         place-items: center;
-        padding: 24px;
-        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
-        background: #f7f3ea;
-        color: #1f1a14;
+        padding-top: max(16px, env(safe-area-inset-top, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+        padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        background: #111;
+        color: #e8e8e8;
       }
       article {
-        max-width: 640px;
-        padding: 24px;
-        border: 1px solid #c9b99f;
-        border-radius: 18px;
-        background: #fffaf2;
+        max-width: 40rem;
+      }
+      h1, p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 1rem;
+        font-weight: 600;
+      }
+      p {
+        margin-top: 0.75rem;
+        line-height: 1.5;
       }
       code { font-family: inherit; }
     </style>
@@ -212,7 +163,7 @@ export function renderUnauthorizedPage(sessionId: string): string {
 </html>`;
 }
 
-export function renderTtydUnavailablePage(session: SessionRecord, reason: string): string {
+export function renderTtydUnavailablePage(_session: SessionRecord, reason: string): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -220,35 +171,43 @@ export function renderTtydUnavailablePage(session: SessionRecord, reason: string
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Terminal unavailable</title>
     <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
+        background: #111;
+        color: #e8e8e8;
+      }
+      html {
+        width: 100%;
+        height: 100%;
+        background: #111;
+      }
       body {
         margin: 0;
         min-height: 100vh;
+        min-height: 100dvh;
         display: grid;
         place-items: center;
-        padding: 24px;
-        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
-        background: #14110f;
-        color: #f4eadb;
+        padding-top: max(16px, env(safe-area-inset-top, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+        padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        background: #111;
+        color: #e8e8e8;
       }
       article {
-        max-width: 720px;
-        padding: 24px;
-        border: 1px solid #6d5b48;
-        border-radius: 18px;
-        background: rgba(41, 30, 24, 0.95);
+        max-width: 48rem;
+      }
+      h1, p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 1rem;
+        font-weight: 600;
       }
       p {
-        line-height: 1.6;
-      }
-      code, pre {
-        font-family: inherit;
-      }
-      pre {
-        margin-top: 16px;
-        padding: 16px;
-        overflow: auto;
-        border-radius: 12px;
-        background: #0d0b0a;
+        margin-top: 0.75rem;
+        line-height: 1.5;
       }
     </style>
   </head>
@@ -256,7 +215,6 @@ export function renderTtydUnavailablePage(session: SessionRecord, reason: string
     <article>
       <h1>ttyd stream is not available</h1>
       <p>${escapeHtml(reason)}</p>
-      <pre>${escapeHtml(JSON.stringify(session.ttyd, null, 2))}</pre>
     </article>
   </body>
 </html>`;

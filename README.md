@@ -8,7 +8,7 @@
 - SQLite session / token 持久化
 - `create/list/get/close` 基础 API
 - `GET /open/:id/:token` 限时 token -> cookie 入口
-- `GET /s/:id` 只读 terminal 页面，可嵌入真实 ttyd 视图
+- `GET /s/:id` 极简全屏 terminal 页面，可嵌入真实 ttyd 视图
 - `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
 - `POST /api/sessions/:id/close` 人工触发的真实 tmux / ttyd 关闭
 - Cloudflare Tunnel / `term.example.com` 部署文档与示例配置
@@ -263,11 +263,11 @@ ttyd 识别策略当前是保守模式：
 
 ### `GET /s/:id`
 
-只读 terminal 页面。必须先通过 `/open/:id/:token` 写 cookie 才能访问。
+极简全屏 terminal 页面。必须先通过 `/open/:id/:token` 写 cookie 才能访问。
 
-- 如果 `ttyd.enabled=true` 且 `upstreamUrl` 可用，页面会通过同源 iframe 嵌入 `/api/sessions/:id/stream/`
+- 如果 `ttyd.enabled=true` 且 `upstreamUrl` 可用，页面会直接以全屏同源 iframe 嵌入 `/api/sessions/:id/stream/`
 - 如果 ttyd 未启用或 upstream 缺失，页面会降级显示“Terminal unavailable”
-- 当前不实现网页写入控制；产品定位仍是只读观察，输入仍应通过聊天转发
+- 页面壳层本身不再显示标题、说明、状态卡片等附加 UI，目标是“打开链接就像直接打开终端”
 
 ### `GET /api/sessions/:id/stream`
 
