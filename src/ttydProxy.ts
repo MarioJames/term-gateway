@@ -27,6 +27,134 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade"
 ]);
 
+const TTYD_HEAD_INJECTION = String.raw`<style>
+html,
+body {
+  overscroll-behavior: contain;
+}
+
+.xterm,
+.xterm-viewport {
+  touch-action: pan-y pinch-zoom !important;
+}
+
+.xterm-viewport {
+  overscroll-behavior: contain !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+</style>
+<script>
+(() => {
+  let activeTouchId = null;
+  let lastClientY = 0;
+
+  const toTouchArray = (touchList) => Array.from(touchList ?? []);
+
+  const getViewport = () => {
+    const viewport = document.querySelector(".xterm-viewport");
+    return viewport instanceof HTMLElement ? viewport : null;
+  };
+
+  const getTerminalRoot = () => {
+    const terminalRoot = document.querySelector(".xterm");
+    return terminalRoot instanceof HTMLElement ? terminalRoot : null;
+  };
+
+  const prepareViewport = () => {
+    const viewport = getViewport();
+    if (!viewport) {
+      return null;
+    }
+
+    viewport.style.touchAction = "pan-y pinch-zoom";
+    viewport.style.overscrollBehavior = "contain";
+    viewport.style.webkitOverflowScrolling = "touch";
+    return viewport;
+  };
+
+  const shouldHandleTouch = (target) => {
+    const terminalRoot = getTerminalRoot();
+    return terminalRoot instanceof HTMLElement && target instanceof Node && terminalRoot.contains(target);
+  };
+
+  const resetTouch = () => {
+    activeTouchId = null;
+  };
+
+  document.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1 || !shouldHandleTouch(event.target)) {
+      return;
+    }
+
+    const viewport = prepareViewport();
+    if (!viewport) {
+      return;
+    }
+
+    activeTouchId = event.touches[0].identifier;
+    lastClientY = event.touches[0].clientY;
+  }, { capture: true, passive: true });
+
+  document.addEventListener("touchmove", (event) => {
+    if (activeTouchId === null) {
+      return;
+    }
+
+    const touch = toTouchArray(event.touches).find((candidate) => candidate.identifier === activeTouchId);
+    if (!touch) {
+      return;
+    }
+
+    const viewport = prepareViewport();
+    if (!viewport) {
+      resetTouch();
+      return;
+    }
+
+    const deltaY = lastClientY - touch.clientY;
+    lastClientY = touch.clientY;
+
+    if (deltaY === 0) {
+      return;
+    }
+
+    viewport.scrollTop += deltaY;
+    if (viewport.scrollHeight > viewport.clientHeight) {
+      event.preventDefault();
+    }
+  }, { capture: true, passive: false });
+
+  document.addEventListener("touchend", (event) => {
+    if (activeTouchId === null) {
+      return;
+    }
+
+    const stillActive = toTouchArray(event.touches).some((touch) => touch.identifier === activeTouchId);
+    if (!stillActive) {
+      resetTouch();
+    }
+  }, { capture: true, passive: true });
+
+  document.addEventListener("touchcancel", resetTouch, { capture: true, passive: true });
+
+  const observer = new MutationObserver(() => {
+    prepareViewport();
+  });
+
+  if (document.documentElement) {
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      prepareViewport();
+    }, { once: true });
+  } else {
+    prepareViewport();
+  }
+})();
+</script>`;
+
 export function matchStreamRoute(pathname: string): StreamRouteMatch | null {
   const match = pathname.match(/^\/api\/sessions\/([^/]+)\/stream(?:\/(.*))?$/);
   if (!match) {
@@ -282,12 +410,12 @@ function sanitizeProxyResponseHeaders(
 }
 
 function rewriteHtmlDocument(html: string, proxyBasePath: string): string {
-  const baseTag = `<base href="${proxyBasePath}" />`;
+  const headInjection = `<base href="${proxyBasePath}" />${TTYD_HEAD_INJECTION}`;
   if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head([^>]*)>/i, (match) => `${match}${baseTag}`);
+    return html.replace(/<head([^>]*)>/i, (match) => `${match}${headInjection}`);
   }
 
-  return `${baseTag}${html}`;
+  return `${headInjection}${html}`;
 }
 
 function rewriteLocationHeader(location: string, proxyBasePath: string, upstreamBaseUrl: URL): string {

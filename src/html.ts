@@ -6,6 +6,19 @@ interface SessionPageOptions {
   ttydStatusMessage: string;
 }
 
+const FONT_STACK = [
+  '"BlexMono Nerd Font"',
+  '"JetBrainsMono Nerd Font"',
+  '"MesloLGS NF"',
+  '"Hack Nerd Font"',
+  '"Iosevka Web"',
+  '"SF Mono"',
+  "Menlo",
+  "Consolas",
+  '"Liberation Mono"',
+  "monospace"
+].join(", ");
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -19,6 +32,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
   const terminalSection = options.ttydAvailable
     ? `<main class="terminal-root">
         <iframe
+          class="terminal-frame"
           src="${escapeHtml(options.streamUrl)}"
           title="Terminal stream ${escapeHtml(session.id)}"
           loading="lazy"
@@ -33,12 +47,12 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Term Gateway ${escapeHtml(session.id)}</title>
     <style>
       :root {
         color-scheme: dark;
-        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
+        font-family: ${FONT_STACK};
         background: #111;
         color: #e8e8e8;
       }
@@ -47,6 +61,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         width: 100%;
         height: 100%;
         background: #111;
+        overflow: hidden;
+        overscroll-behavior: none;
       }
       body {
         margin: 0;
@@ -57,6 +73,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         min-height: 100dvh;
         background: #111;
         overflow: hidden;
+        overscroll-behavior: none;
       }
       .terminal-root,
       .status-root {
@@ -70,6 +87,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         padding-bottom: env(safe-area-inset-bottom, 0px);
         padding-left: env(safe-area-inset-left, 0px);
         background: #111;
+        overflow: hidden;
+        overscroll-behavior: none;
       }
       .status-root {
         display: grid;
@@ -83,12 +102,14 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         max-width: 48rem;
         line-height: 1.5;
       }
-      iframe {
+      .terminal-frame {
         display: block;
         width: 100%;
         height: 100%;
         border: 0;
         background: #111;
+        overscroll-behavior: contain;
+        touch-action: pan-y pinch-zoom;
       }
       @supports (height: 100svh) {
         body,
@@ -115,7 +136,7 @@ export function renderUnauthorizedPage(sessionId: string): string {
     <style>
       :root {
         color-scheme: dark;
-        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
+        font-family: ${FONT_STACK};
         background: #111;
         color: #e8e8e8;
       }
@@ -173,7 +194,7 @@ export function renderTtydUnavailablePage(_session: SessionRecord, reason: strin
     <style>
       :root {
         color-scheme: dark;
-        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
+        font-family: ${FONT_STACK};
         background: #111;
         color: #e8e8e8;
       }
