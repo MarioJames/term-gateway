@@ -152,7 +152,7 @@ npm run start
 为避免依赖访问者本机字体，当前版本会通过 `GET /assets/*` 自托管字体资源，并在页面壳层与注入后的 ttyd HTML 中优先使用同一套字体栈：
 
 - `JetBrains Mono`：终端主体的 Latin / 常见符号
-- `Noto Sans SC Variable`：简体中文回退，保证中文可读
+- `Sarasa Mono SC`：终端内的简体中文等宽回退，保证 CJK cell 宽度稳定
 - `Symbols Nerd Font Mono`：尽量保留 Nerd Font / Powerline / PUA 符号
 
 字体文件位于：

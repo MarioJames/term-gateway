@@ -4,7 +4,7 @@ import net from "node:net";
 import type { Duplex } from "node:stream";
 import tls from "node:tls";
 
-import { TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH } from "./fonts.js";
+import { TERM_CJK_FONT_FAMILY, TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH, TERM_XTERM_FONT_STACK } from "./fonts.js";
 import type { SessionRecord } from "./types.js";
 
 export interface StreamRouteMatch {
@@ -56,10 +56,170 @@ body,
 </style>
 <script>
 (() => {
+  const desiredFontFamily = ${JSON.stringify(TERM_XTERM_FONT_STACK)};
+  const cjkFontFamily = ${JSON.stringify(TERM_CJK_FONT_FAMILY)};
+  const patchedMarker = Symbol.for("term-gateway.xterm-font-patched");
+  const trackedTerminals = new Set();
   let activeTouchId = null;
   let lastClientY = 0;
+  let refreshQueued = false;
 
   const toTouchArray = (touchList) => Array.from(touchList ?? []);
+
+  const isTerminalLike = (value) =>
+    value &&
+    typeof value === "object" &&
+    typeof value.open === "function" &&
+    value.options &&
+    typeof value.options === "object";
+
+  const applyTerminalFont = (terminal) => {
+    if (!isTerminalLike(terminal)) {
+      return;
+    }
+
+    try {
+      terminal.options.fontFamily = desiredFontFamily;
+    } catch {
+      // Ignore terminals that reject option writes.
+    }
+  };
+
+  const rememberTerminal = (terminal) => {
+    if (!isTerminalLike(terminal)) {
+      return terminal;
+    }
+
+    trackedTerminals.add(terminal);
+    applyTerminalFont(terminal);
+    return terminal;
+  };
+
+  const discoverTrackedTerminals = () => {
+    rememberTerminal(window.term);
+    rememberTerminal(window.terminal);
+
+    if (Array.isArray(window.terminals)) {
+      for (const terminal of window.terminals) {
+        rememberTerminal(terminal);
+      }
+    }
+  };
+
+  const refreshTerminal = (terminal) => {
+    if (!isTerminalLike(terminal)) {
+      return;
+    }
+
+    applyTerminalFont(terminal);
+
+    try {
+      const core = terminal._core;
+      core?._charSizeService?.measure?.();
+      core?._renderService?.clear?.();
+      core?._viewport?.syncScrollArea?.();
+
+      if (typeof terminal.rows === "number" && terminal.rows > 0 && typeof terminal.refresh === "function") {
+        terminal.refresh(0, terminal.rows - 1);
+      }
+    } catch {
+      // Ignore renderer-specific refresh failures and keep the terminal usable.
+    }
+  };
+
+  const refreshTrackedTerminals = () => {
+    discoverTrackedTerminals();
+
+    for (const terminal of trackedTerminals) {
+      refreshTerminal(terminal);
+    }
+  };
+
+  const queueTerminalRefresh = () => {
+    if (refreshQueued) {
+      return;
+    }
+
+    refreshQueued = true;
+    requestAnimationFrame(() => {
+      refreshQueued = false;
+      refreshTrackedTerminals();
+    });
+  };
+
+  const patchTerminalConstructor = (TerminalCtor) => {
+    if (typeof TerminalCtor !== "function" || TerminalCtor[patchedMarker]) {
+      return TerminalCtor;
+    }
+
+    const originalOpen = TerminalCtor.prototype?.open;
+    if (typeof originalOpen === "function" && !originalOpen[patchedMarker]) {
+      TerminalCtor.prototype.open = function(...args) {
+        rememberTerminal(this);
+        const result = originalOpen.apply(this, args);
+        queueTerminalRefresh();
+        return result;
+      };
+      Object.defineProperty(TerminalCtor.prototype.open, patchedMarker, {
+        value: true
+      });
+    }
+
+    class PatchedTerminal extends TerminalCtor {
+      constructor(options = {}) {
+        super({ ...options, fontFamily: desiredFontFamily });
+        rememberTerminal(this);
+      }
+    }
+
+    Object.defineProperty(PatchedTerminal, patchedMarker, {
+      value: true
+    });
+
+    return PatchedTerminal;
+  };
+
+  const installTerminalPatch = () => {
+    let currentTerminalCtor = window.Terminal;
+
+    try {
+      Object.defineProperty(window, "Terminal", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return currentTerminalCtor;
+        },
+        set(value) {
+          currentTerminalCtor = patchTerminalConstructor(value);
+        }
+      });
+    } catch {
+      currentTerminalCtor = patchTerminalConstructor(currentTerminalCtor);
+      window.Terminal = currentTerminalCtor;
+      return;
+    }
+
+    currentTerminalCtor = patchTerminalConstructor(currentTerminalCtor);
+  };
+
+  const refreshAfterFontsLoad = async () => {
+    if (!document.fonts || typeof document.fonts.load !== "function") {
+      queueTerminalRefresh();
+      return;
+    }
+
+    try {
+      await Promise.all([
+        document.fonts.load(\`400 1em "\${cjkFontFamily}"\`, "中"),
+        document.fonts.load(\`700 1em "\${cjkFontFamily}"\`, "中"),
+        document.fonts.ready
+      ]);
+    } catch {
+      // Keep rendering even if the browser rejects one of the font probes.
+    }
+
+    queueTerminalRefresh();
+  };
 
   const getViewport = () => {
     const viewport = document.querySelector(".xterm-viewport");
@@ -152,6 +312,10 @@ body,
     prepareViewport();
   });
 
+  installTerminalPatch();
+  refreshAfterFontsLoad();
+  window.addEventListener("resize", queueTerminalRefresh, { passive: true });
+
   if (document.documentElement) {
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
@@ -159,9 +323,11 @@ body,
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       prepareViewport();
+      queueTerminalRefresh();
     }, { once: true });
   } else {
     prepareViewport();
+    queueTerminalRefresh();
   }
 })();
 </script>`;
