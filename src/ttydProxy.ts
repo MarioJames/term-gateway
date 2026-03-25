@@ -27,10 +27,33 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade"
 ]);
 
+const TTYD_FONT_STACK = [
+  '"BlexMono Nerd Font"',
+  '"JetBrainsMono Nerd Font"',
+  '"MesloLGS NF"',
+  '"Hack Nerd Font"',
+  '"Noto Sans Mono CJK SC"',
+  '"PingFang SC"',
+  '"Hiragino Sans GB"',
+  '"Microsoft YaHei UI"',
+  '"SF Mono"',
+  "Menlo",
+  "Consolas",
+  '"Liberation Mono"',
+  "monospace"
+].join(", ");
+
 const TTYD_HEAD_INJECTION = String.raw`<style>
 html,
 body {
   overscroll-behavior: contain;
+}
+
+body,
+.xterm,
+.xterm .xterm-rows,
+.xterm-helper-textarea {
+  font-family: ${TTYD_FONT_STACK} !important;
 }
 
 .xterm,
