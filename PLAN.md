@@ -11,8 +11,10 @@
 - **本地持久化当前有哪些 PTY 会话**
 - **后续可平滑接入 Cloudflare Tunnel 独立域名**
 
-项目目录：`~/workspace/term-gateway`
-预期独立域名：`term.example.com`
+公开仓库约束：
+- 文档和示例配置不写死个人目录、个人域名或供应商环境信息
+- 应用关键配置统一收敛到 `.env.example`
+- Tunnel / 反向代理示例统一使用通用占位符或 `term.example.com`
 
 ---
 
@@ -136,7 +138,7 @@ data/
 - 如果 ttyd 已可接入，再嵌入 iframe 或代理视图
 
 ### F. 配置
-提供 `.env.example`，至少包含：
+提供 `.env.example` 作为主要配置入口，至少包含：
 
 ```env
 HOST=127.0.0.1
@@ -148,6 +150,11 @@ COOKIE_NAME=term_gateway_session
 COOKIE_SECURE=false
 OPEN_TOKEN_TTL_SECONDS=1800
 ```
+
+并明确：
+- `PUBLIC_BASE_URL` 代表最终对外访问地址
+- `COOKIE_SECURE` 随 HTTPS 打开
+- Tunnel / 反向代理示例里的 hostname 与回源地址需要与 `.env` 对齐
 
 ---
 
@@ -203,42 +210,19 @@ OPEN_TOKEN_TTL_SECONDS=1800
 
 第二阶段再做：
 - 接入真实 ttyd 反代
-- 接入 Cloudflare Tunnel 独立域名 `term.example.com`
+- 接入 Cloudflare Tunnel 独立域名（使用自有域名）
 - 增加“每小时提醒用户是否清理 PTY”的调度机制
 - 增加真实关闭能力：kill tmux / kill ttyd
 - 如果需要，再叠 Cloudflare Access
 
 ---
 
-## 当前阻塞与注意事项
+## 文档与开源清洗约束
 
-### Codex 当前环境问题
-这次实施过程中，Codex 在当前会话环境里仍读到了：
-
-```text
-```
-
-导致 Codex 请求继续打到 DashScope 的 `/v1/responses`，出现：
-- websocket 405
-- https 404
-
-因此下一会话开始前，建议优先确认：
-
----
-
-## 下一会话的开工指令
-
-新会话可以直接按下面目标执行：
-
-1. 进入 `~/workspace/term-gateway`
-3. 如果环境干净，则使用 Codex 实现本计划的 MVP
-4. 如果环境仍脏，则先征求用户是否允许：
-   - 再继续 Codex 实施
-5. 实现完成后：
-   - 本地验证可运行
-   - 写实现报告
-   - git commit
-   - 不 push
+- README、PLAN、示例配置文件统一使用通用示例值，不保留个人环境痕迹
+- `.env.example` 负责承载公开文档里提到的关键应用配置
+- `.gitignore` 继续忽略 `.env`、`.env.*`、数据库文件和本地 `cloudflared` 实际配置
+- 文档要保留“可落地运行”的说明，避免因为清洗而丢失部署步骤或验证方法
 
 ---
 

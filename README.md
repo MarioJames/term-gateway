@@ -11,7 +11,7 @@
 - `GET /s/:id` 极简全屏 terminal 页面，可嵌入真实 ttyd 视图
 - `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
 - `POST /api/sessions/:id/close` 人工触发的真实 tmux / ttyd 关闭
-- Cloudflare Tunnel / `term.example.com` 部署文档与示例配置
+- Cloudflare Tunnel / 反向代理部署文档与示例配置
 - `ttyd.enabled=false` 或 upstream 未配置时的优雅降级
 
 ## 明确未实现
@@ -28,55 +28,42 @@
 
 ## 配置
 
-复制 `.env.example` 到 `.env`：
+应用配置以 `.env.example` 为准。复制到 `.env` 后按需修改：
 
 ```bash
 cp .env.example .env
 ```
 
-环境变量：
+关键项：
 
-```env
-HOST=127.0.0.1
-PORT=4317
-PUBLIC_BASE_URL=http://127.0.0.1:4317
-SESSION_SECRET=change-me
-DATABASE_PATH=./data/term-gateway.sqlite
-COOKIE_NAME=term_gateway_session
-COOKIE_SECURE=false
-OPEN_TOKEN_TTL_SECONDS=1800
-```
+- `HOST` / `PORT`: Node 服务监听地址
+- `PUBLIC_BASE_URL`: 用于生成 `openUrl` 的外部访问地址
+- `SESSION_SECRET`: 公开部署前必须替换
+- `DATABASE_PATH`: SQLite 文件路径
+- `COOKIE_NAME` / `COOKIE_SECURE`: 访问 cookie 配置
+- `OPEN_TOKEN_TTL_SECONDS`: 首访链接有效期
+
+本地开发通常保留默认值；如果通过 Tunnel 或反向代理暴露公网入口，优先修改 `.env` 里的 `PUBLIC_BASE_URL` 和 `COOKIE_SECURE`。
 
 ## Cloudflare Tunnel 部署
 
-如果要把当前服务通过独立公网域名暴露，推荐把公网入口固定为：
-
-```text
-https://term.example.com
-```
-
-这部分只补项目侧支持，不改变当前产品能力，也不引入 Cloudflare Access。
+如果要通过 Cloudflare Tunnel 暴露公网入口，先把应用侧配置收敛到 `.env`。公开仓库里的示例统一使用通用占位符，例如 `https://term.example.com`。
 
 ### 生产环境变量示例
 
-当 `term-gateway` 在本机 `127.0.0.1:4317` 上监听，而公网入口由 Cloudflare Tunnel 暴露为 `https://term.example.com` 时，推荐 `.env` 至少这样配置：
+复制 `.env.example` 后，公网部署至少确认这些值：
 
 ```env
-HOST=127.0.0.1
-PORT=4317
 PUBLIC_BASE_URL=https://term.example.com
 SESSION_SECRET=replace-with-a-long-random-secret
-DATABASE_PATH=./data/term-gateway.sqlite
-COOKIE_NAME=term_gateway_session
 COOKIE_SECURE=true
-OPEN_TOKEN_TTL_SECONDS=1800
 ```
 
 关键点：
 
-- `PUBLIC_BASE_URL` 必须使用最终公网地址 `https://term.example.com`
+- `PUBLIC_BASE_URL` 必须使用最终公网地址，例如 `https://term.example.com`
 - `COOKIE_SECURE=true`，因为公网访问走 HTTPS
-- `HOST` 继续保持 `127.0.0.1`，由 `cloudflared` 在同机回源到本地服务
+- `HOST` / `PORT` 决定应用实际监听地址；`cloudflared` 需要回源到对应的 `http://HOST:PORT`
 - `DATABASE_PATH` 指向 SQLite 文件；服务启动时会自动建库建表
 - `OPEN_TOKEN_TTL_SECONDS` 默认 1800 秒，也就是 30 分钟
 
@@ -89,8 +76,8 @@ tunnel: <YOUR_TUNNEL_UUID>
 credentials-file: /etc/cloudflared/<YOUR_TUNNEL_UUID>.json
 
 ingress:
-  - hostname: term.example.com
-    service: http://127.0.0.1:4317
+  - hostname: <YOUR_PUBLIC_HOSTNAME>
+    service: http://<TERM_GATEWAY_HOST>:<TERM_GATEWAY_PORT>
   - service: http_status:404
 ```
 
@@ -103,17 +90,18 @@ cloudflared/config.example.yml
 ### 推荐部署步骤
 
 1. 在 Cloudflare 上创建 tunnel。
-2. 把 `term.example.com` 这个公网 hostname 路由到该 tunnel。
+2. 把你的公网 hostname 路由到该 tunnel。
 3. 在运行 `term-gateway` 的机器上安装 `cloudflared`。
-4. 启动本地服务：
+4. 基于 `.env.example` 准备 `.env`，确认 `PUBLIC_BASE_URL`、`HOST`、`PORT`、`SESSION_SECRET`。
+5. 启动本地服务：
 
 ```bash
 npm run build
 npm run start
 ```
 
-5. 准备 `cloudflared` 配置文件，可基于仓库里的示例复制后填入真实 tunnel UUID 和 credentials 文件路径。
-6. 启动 tunnel：
+6. 准备 `cloudflared` 配置文件，可基于仓库里的示例复制后填入真实 tunnel UUID、hostname 和回源地址。
+7. 启动 tunnel：
 
 ```bash
 cloudflared tunnel run <YOUR_TUNNEL_UUID_OR_NAME>
@@ -122,14 +110,14 @@ cloudflared tunnel run <YOUR_TUNNEL_UUID_OR_NAME>
 如果你使用本地管理的 tunnel，也可以先显式把 DNS 记录绑定到 tunnel：
 
 ```bash
-cloudflared tunnel route dns <YOUR_TUNNEL_UUID_OR_NAME> term.example.com
+cloudflared tunnel route dns <YOUR_TUNNEL_UUID_OR_NAME> <YOUR_PUBLIC_HOSTNAME>
 ```
 
 ### 生产建议
 
-- `term-gateway` 和 `cloudflared` 部署在同一台机器上时，`service` 直接写 `http://127.0.0.1:4317`
+- `term-gateway` 和 `cloudflared` 部署在同一台机器上时，`service` 直接写 `http://HOST:PORT`
 - 如果 `cloudflared` 与 `term-gateway` 不在同机，`service` 改成 `term-gateway` 实际可达的内网地址
-- 先确认本地 `http://127.0.0.1:4317` 正常，再启动 tunnel，避免把 tunnel 层问题和应用层问题混在一起
+- 先确认部署机上的 `http://HOST:PORT` 可用，再启动 tunnel，避免把 tunnel 层问题和应用层问题混在一起
 - 当前项目尚未接入 Cloudflare Access；如果未来要加登录保护，应在 tunnel 可用后再单独叠加
 
 ## 运行
@@ -214,7 +202,7 @@ data/term-gateway.sqlite
       "consumedAt": null
     }
   },
-  "openUrl": "http://127.0.0.1:4317/open/opaque_random_id/<token>"
+  "openUrl": "https://term.example.com/open/opaque_random_id/<token>"
 }
 ```
 
@@ -280,10 +268,17 @@ ttyd 识别策略当前是保守模式：
 
 ## 手工验证示例
 
+如果你已经在 shell 里导出了与 `.env` 一致的值，可以直接复用：
+
+```bash
+BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1:${PORT:-4317}}"
+COOKIE_NAME="${COOKIE_NAME:-term_gateway_session}"
+```
+
 创建会话：
 
 ```bash
-curl -sS -X POST http://127.0.0.1:4317/api/sessions \
+curl -sS -X POST "$BASE_URL/api/sessions" \
   -H 'content-type: application/json' \
   -d '{"taskName":"demo","agent":"codex","tmuxSession":"demo"}'
 ```
@@ -297,19 +292,19 @@ curl -i <openUrl>
 然后带 cookie 访问：
 
 ```bash
-curl -i http://127.0.0.1:4317/s/<session_id> \
-  -H 'Cookie: term_gateway_session=<cookie-value>'
+curl -i "$BASE_URL/s/<session_id>" \
+  -H "Cookie: $COOKIE_NAME=<cookie-value>"
 ```
 
 如果该 session 配置了 ttyd upstream，也可以直接验证代理根路径：
 
 ```bash
-curl -i http://127.0.0.1:4317/api/sessions/<session_id>/stream/ \
-  -H 'Cookie: term_gateway_session=<cookie-value>'
+curl -i "$BASE_URL/api/sessions/<session_id>/stream/" \
+  -H "Cookie: $COOKIE_NAME=<cookie-value>"
 ```
 
 ## 后续建议
 
-- 接入 Cloudflare Tunnel / 独立域名
+- 接入你自己的 Cloudflare Tunnel / 独立域名
 - 如果需要真正的只读约束，再单独评估 ttyd / 前端层的输入限制方案
 - 如果要让 ttyd close 更可靠，可以在 session 元数据中额外记录受控 pid 或启动元信息

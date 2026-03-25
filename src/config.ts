@@ -50,12 +50,20 @@ function resolveDatabasePath(rawValue: string | undefined): string {
   return databasePath === ":memory:" ? databasePath : resolve(process.cwd(), databasePath);
 }
 
+function buildDefaultPublicBaseUrl(host: string, port: number): string {
+  const defaultHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const formattedHost = defaultHost.includes(":") ? `[${defaultHost}]` : defaultHost;
+  return `http://${formattedHost}:${port}`;
+}
+
 export function loadConfig(): AppConfig {
-  const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? "http://127.0.0.1:4317").replace(/\/+$/, "");
+  const host = process.env.HOST ?? "127.0.0.1";
+  const port = parsePort(process.env.PORT, 4317);
+  const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? buildDefaultPublicBaseUrl(host, port)).replace(/\/+$/, "");
 
   return {
-    host: process.env.HOST ?? "127.0.0.1",
-    port: parsePort(process.env.PORT, 4317),
+    host,
+    port,
     publicBaseUrl,
     sessionSecret: process.env.SESSION_SECRET ?? "change-me",
     databasePath: resolveDatabasePath(process.env.DATABASE_PATH),

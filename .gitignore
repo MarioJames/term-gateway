@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .env
+.env.*
 data/
+cloudflared/*.yml
+!cloudflared/config.example.yml
 npm-debug.log*
