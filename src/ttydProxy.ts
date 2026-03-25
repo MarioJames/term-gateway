@@ -4,6 +4,7 @@ import net from "node:net";
 import type { Duplex } from "node:stream";
 import tls from "node:tls";
 
+import { TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH } from "./fonts.js";
 import type { SessionRecord } from "./types.js";
 
 export interface StreamRouteMatch {
@@ -27,23 +28,8 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade"
 ]);
 
-const TTYD_FONT_STACK = [
-  '"BlexMono Nerd Font"',
-  '"JetBrainsMono Nerd Font"',
-  '"MesloLGS NF"',
-  '"Hack Nerd Font"',
-  '"Noto Sans Mono CJK SC"',
-  '"PingFang SC"',
-  '"Hiragino Sans GB"',
-  '"Microsoft YaHei UI"',
-  '"SF Mono"',
-  "Menlo",
-  "Consolas",
-  '"Liberation Mono"',
-  "monospace"
-].join(", ");
-
-const TTYD_HEAD_INJECTION = String.raw`<style>
+const TTYD_HEAD_INJECTION = String.raw`<link rel="stylesheet" href="${TERM_FONT_STYLESHEET_PATH}" />
+<style>
 html,
 body {
   overscroll-behavior: contain;
@@ -53,7 +39,9 @@ body,
 .xterm,
 .xterm .xterm-rows,
 .xterm-helper-textarea {
-  font-family: ${TTYD_FONT_STACK} !important;
+  font-family: ${TERM_FONT_STACK} !important;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "liga" 0, "calt" 0 !important;
 }
 
 .xterm,

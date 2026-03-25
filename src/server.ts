@@ -1,5 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import type { Duplex } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import {
   generateOpaqueValue,
@@ -24,6 +28,15 @@ import type { CreateSessionInput, SessionRecord } from "./types.js";
 
 const config = loadConfig();
 const registry = new SessionRegistry(config.databasePath, config.openTokenTtlSeconds);
+const assetsRootPath = fileURLToPath(new URL("../assets", import.meta.url));
+
+const ASSET_CONTENT_TYPES = new Map<string, string>([
+  [".css", "text/css; charset=utf-8"],
+  [".ttf", "font/ttf"],
+  [".woff", "font/woff"],
+  [".woff2", "font/woff2"],
+  [".txt", "text/plain; charset=utf-8"]
+]);
 
 await registry.init();
 
@@ -61,6 +74,11 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
   const method = request.method ?? "GET";
   const requestUrl = new URL(request.url ?? "/", config.publicBaseUrl);
   const pathname = requestUrl.pathname;
+
+  if ((method === "GET" || method === "HEAD") && pathname.startsWith("/assets/")) {
+    await handleStaticAsset(response, pathname, method === "HEAD");
+    return;
+  }
 
   if (method === "POST" && pathname === "/api/sessions") {
     await handleCreateSession(request, response);
@@ -276,6 +294,52 @@ async function handleUpgradeRequest(request: IncomingMessage, socket: Duplex, he
   proxyWebSocketUpgrade(request, socket, head, ttydTarget.target, requestUrl, streamRoute);
 }
 
+async function handleStaticAsset(response: ServerResponse, pathname: string, headOnly: boolean): Promise<void> {
+  const relativeAssetPath = decodeURIComponent(pathname.slice("/assets/".length));
+  if (!relativeAssetPath || relativeAssetPath.endsWith("/")) {
+    sendText(response, 404, "Asset not found");
+    return;
+  }
+
+  const assetPath = resolve(assetsRootPath, relativeAssetPath);
+  if (!isPathInsideDirectory(assetPath, assetsRootPath)) {
+    sendText(response, 404, "Asset not found");
+    return;
+  }
+
+  try {
+    const assetStats = await stat(assetPath);
+    if (!assetStats.isFile()) {
+      sendText(response, 404, "Asset not found");
+      return;
+    }
+
+    response.statusCode = 200;
+    response.setHeader("Cache-Control", "public, max-age=86400");
+    response.setHeader("Content-Length", `${assetStats.size}`);
+    response.setHeader("Content-Type", getAssetContentType(assetPath));
+    response.setHeader("X-Content-Type-Options", "nosniff");
+
+    if (headOnly) {
+      response.end();
+      return;
+    }
+
+    const assetStream = createReadStream(assetPath);
+    assetStream.on("error", (error) => {
+      if (response.headersSent) {
+        response.destroy(error);
+        return;
+      }
+
+      sendText(response, 500, "Unable to read asset");
+    });
+    assetStream.pipe(response);
+  } catch {
+    sendText(response, 404, "Asset not found");
+  }
+}
+
 async function authenticateSessionAccess(
   request: IncomingMessage,
   sessionId: string
@@ -345,4 +409,18 @@ function sendHtml(response: ServerResponse, statusCode: number, html: string): v
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "text/html; charset=utf-8");
   response.end(html);
+}
+
+function sendText(response: ServerResponse, statusCode: number, body: string): void {
+  response.statusCode = statusCode;
+  response.setHeader("Content-Type", "text/plain; charset=utf-8");
+  response.end(body);
+}
+
+function getAssetContentType(assetPath: string): string {
+  return ASSET_CONTENT_TYPES.get(extname(assetPath).toLowerCase()) ?? "application/octet-stream";
+}
+
+function isPathInsideDirectory(targetPath: string, directoryPath: string): boolean {
+  return targetPath === directoryPath || targetPath.startsWith(`${directoryPath}${sep}`);
 }

@@ -11,6 +11,7 @@
 - `GET /s/:id` 极简全屏 terminal 页面，可嵌入真实 ttyd 视图
 - `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
 - `POST /api/sessions/:id/close` 人工触发的真实 tmux / ttyd 关闭
+- 随仓库分发并由应用自托管的 Web 字体，覆盖 Latin / 简体中文 / Nerd Font 常见符号
 - Cloudflare Tunnel / 反向代理部署文档与示例配置
 - `ttyd.enabled=false` 或 upstream 未配置时的优雅降级
 
@@ -146,6 +147,20 @@ npm run build
 npm run start
 ```
 
+## Bundled Fonts
+
+为避免依赖访问者本机字体，当前版本会通过 `GET /assets/*` 自托管字体资源，并在页面壳层与注入后的 ttyd HTML 中优先使用同一套字体栈：
+
+- `JetBrains Mono`：终端主体的 Latin / 常见符号
+- `Noto Sans SC Variable`：简体中文回退，保证中文可读
+- `Symbols Nerd Font Mono`：尽量保留 Nerd Font / Powerline / PUA 符号
+
+字体文件位于：
+
+```text
+assets/fonts/
+```
+
 ## 数据落盘
 
 SQLite 数据库默认保存在：
@@ -256,6 +271,7 @@ ttyd 识别策略当前是保守模式：
 - 如果 `ttyd.enabled=true` 且 `upstreamUrl` 可用，页面会直接以全屏同源 iframe 嵌入 `/api/sessions/:id/stream/`
 - 如果 ttyd 未启用或 upstream 缺失，页面会降级显示“Terminal unavailable”
 - 页面壳层本身不再显示标题、说明、状态卡片等附加 UI，目标是“打开链接就像直接打开终端”
+- 页面壳层和 ttyd iframe 注入层都会优先使用仓库内置字体，不依赖访问者本机 Nerd Font 或中文字体
 
 ### `GET /api/sessions/:id/stream`
 

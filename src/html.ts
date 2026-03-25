@@ -1,3 +1,4 @@
+import { TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH } from "./fonts.js";
 import type { SessionRecord } from "./types.js";
 
 interface SessionPageOptions {
@@ -5,23 +6,6 @@ interface SessionPageOptions {
   ttydAvailable: boolean;
   ttydStatusMessage: string;
 }
-
-const FONT_STACK = [
-  '"BlexMono Nerd Font"',
-  '"JetBrainsMono Nerd Font"',
-  '"MesloLGS NF"',
-  '"Hack Nerd Font"',
-  '"Noto Sans Mono CJK SC"',
-  '"PingFang SC"',
-  '"Hiragino Sans GB"',
-  '"Microsoft YaHei UI"',
-  '"Iosevka Web"',
-  '"SF Mono"',
-  "Menlo",
-  "Consolas",
-  '"Liberation Mono"',
-  "monospace"
-].join(", ");
 
 function escapeHtml(value: string): string {
   return value
@@ -53,10 +37,11 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Term Gateway ${escapeHtml(session.id)}</title>
+    <link rel="stylesheet" href="${TERM_FONT_STYLESHEET_PATH}" />
     <style>
       :root {
         color-scheme: dark;
-        font-family: ${FONT_STACK};
+        font-family: ${TERM_FONT_STACK};
         background: #111;
         color: #e8e8e8;
       }
@@ -78,6 +63,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         background: #111;
         overflow: hidden;
         overscroll-behavior: none;
+        font-variant-ligatures: none;
+        font-feature-settings: "liga" 0, "calt" 0;
       }
       .terminal-root,
       .status-root {
@@ -137,10 +124,11 @@ export function renderUnauthorizedPage(sessionId: string): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Unauthorized</title>
+    <link rel="stylesheet" href="${TERM_FONT_STYLESHEET_PATH}" />
     <style>
       :root {
         color-scheme: dark;
-        font-family: ${FONT_STACK};
+        font-family: ${TERM_FONT_STACK};
         background: #111;
         color: #e8e8e8;
       }
@@ -161,6 +149,8 @@ export function renderUnauthorizedPage(sessionId: string): string {
         padding-left: max(16px, env(safe-area-inset-left, 0px));
         background: #111;
         color: #e8e8e8;
+        font-variant-ligatures: none;
+        font-feature-settings: "liga" 0, "calt" 0;
       }
       article {
         max-width: 40rem;
@@ -195,10 +185,11 @@ export function renderTtydUnavailablePage(_session: SessionRecord, reason: strin
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Terminal unavailable</title>
+    <link rel="stylesheet" href="${TERM_FONT_STYLESHEET_PATH}" />
     <style>
       :root {
         color-scheme: dark;
-        font-family: ${FONT_STACK};
+        font-family: ${TERM_FONT_STACK};
         background: #111;
         color: #e8e8e8;
       }
@@ -219,6 +210,8 @@ export function renderTtydUnavailablePage(_session: SessionRecord, reason: strin
         padding-left: max(16px, env(safe-area-inset-left, 0px));
         background: #111;
         color: #e8e8e8;
+        font-variant-ligatures: none;
+        font-feature-settings: "liga" 0, "calt" 0;
       }
       article {
         max-width: 48rem;
