@@ -4,7 +4,7 @@ import net from "node:net";
 import type { Duplex } from "node:stream";
 import tls from "node:tls";
 
-import { TERM_CJK_FONT_FAMILY, TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH, TERM_XTERM_FONT_STACK } from "./fonts.js";
+import { TERM_FONT_FAMILY, TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH, TERM_XTERM_FONT_STACK } from "./fonts.js";
 import type { SessionRecord } from "./types.js";
 
 export interface StreamRouteMatch {
@@ -57,7 +57,7 @@ body,
 <script>
 (() => {
   const desiredFontFamily = ${JSON.stringify(TERM_XTERM_FONT_STACK)};
-  const cjkFontFamily = ${JSON.stringify(TERM_CJK_FONT_FAMILY)};
+  const terminalFontFamily = ${JSON.stringify(TERM_FONT_FAMILY)};
   const patchedMarker = Symbol.for("term-gateway.xterm-font-patched");
   const trackedTerminals = new Set();
   let activeTouchId = null;
@@ -210,8 +210,8 @@ body,
 
     try {
       await Promise.all([
-        document.fonts.load(\`400 1em "\${cjkFontFamily}"\`, "中"),
-        document.fonts.load(\`700 1em "\${cjkFontFamily}"\`, "中"),
+        document.fonts.load(\`400 1em "\${terminalFontFamily}"\`, "A\u4e2d\ue0b0"),
+        document.fonts.load(\`700 1em "\${terminalFontFamily}"\`, "A\u4e2d\ue0b0"),
         document.fonts.ready
       ]);
     } catch {
