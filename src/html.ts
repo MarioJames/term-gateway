@@ -1,5 +1,11 @@
 import type { SessionRecord } from "./types.js";
 
+interface SessionPageOptions {
+  streamUrl: string;
+  ttydAvailable: boolean;
+  ttydStatusMessage: string;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -13,10 +19,24 @@ function renderRow(label: string, value: string): string {
   return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`;
 }
 
-export function renderSessionPage(session: SessionRecord): string {
-  const ttydMessage = session.ttyd.enabled
-    ? "ttyd upstream has been configured, but the proxy layer is still a stub in this MVP."
-    : "ttyd is not enabled for this session yet. This page is a read-only placeholder.";
+export function renderSessionPage(session: SessionRecord, options: SessionPageOptions): string {
+  const terminalSection = options.ttydAvailable
+    ? `<section class="terminal-shell">
+        <div class="terminal-meta">
+          <strong>Live terminal view</strong>
+          <span>${escapeHtml(options.ttydStatusMessage)}</span>
+        </div>
+        <iframe
+          src="${escapeHtml(options.streamUrl)}"
+          title="Terminal stream ${escapeHtml(session.id)}"
+          loading="lazy"
+          referrerpolicy="same-origin"
+        ></iframe>
+      </section>`
+    : `<section class="panel">
+        <strong>Terminal unavailable</strong>
+        <p>${escapeHtml(options.ttydStatusMessage)}</p>
+      </section>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -38,7 +58,7 @@ export function renderSessionPage(session: SessionRecord): string {
         padding: 32px 20px;
       }
       main {
-        max-width: 960px;
+        max-width: 1180px;
         margin: 0 auto;
         background: rgba(255, 252, 247, 0.92);
         border: 1px solid #c9b99f;
@@ -83,6 +103,29 @@ export function renderSessionPage(session: SessionRecord): string {
         background: #f2eadf;
         border: 1px solid #d4c2ab;
       }
+      .terminal-shell {
+        margin-top: 24px;
+        overflow: hidden;
+        border-radius: 18px;
+        border: 1px solid #c3b49e;
+        background: #17120f;
+      }
+      .terminal-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 18px;
+        background: linear-gradient(90deg, #35271d 0%, #574131 100%);
+        color: #f5ead9;
+        font-size: 14px;
+      }
+      iframe {
+        display: block;
+        width: 100%;
+        min-height: 66vh;
+        border: 0;
+        background: #111;
+      }
       code, pre {
         font-family: inherit;
       }
@@ -119,10 +162,12 @@ export function renderSessionPage(session: SessionRecord): string {
         </tbody>
       </table>
 
+      ${terminalSection}
+
       <section class="panel">
-        <strong>ttyd stub</strong>
-        <p>${escapeHtml(ttydMessage)}</p>
-        <p>Reserved stream endpoint: <a href="/api/sessions/${encodeURIComponent(session.id)}/stream">/api/sessions/${escapeHtml(session.id)}/stream</a></p>
+        <strong>Gateway note</strong>
+        <p>This UI remains read-only in product intent. Commands should still be sent through chat; this page only mirrors the ttyd session when one is configured upstream.</p>
+        <p>Embedded stream path: <a href="${escapeHtml(options.streamUrl)}">${escapeHtml(options.streamUrl)}</a></p>
         <pre>${escapeHtml(JSON.stringify(session.ttyd, null, 2))}</pre>
       </section>
     </main>
@@ -162,6 +207,56 @@ export function renderUnauthorizedPage(sessionId: string): string {
     <article>
       <h1>Session access requires the one-time open link</h1>
       <p>Use the original <code>/open/${escapeHtml(sessionId)}/&lt;token&gt;</code> link first so the gateway can exchange it for a signed session cookie.</p>
+    </article>
+  </body>
+</html>`;
+}
+
+export function renderTtydUnavailablePage(session: SessionRecord, reason: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Terminal unavailable</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        font-family: "Iosevka Web", "SF Mono", Menlo, monospace;
+        background: #14110f;
+        color: #f4eadb;
+      }
+      article {
+        max-width: 720px;
+        padding: 24px;
+        border: 1px solid #6d5b48;
+        border-radius: 18px;
+        background: rgba(41, 30, 24, 0.95);
+      }
+      p {
+        line-height: 1.6;
+      }
+      code, pre {
+        font-family: inherit;
+      }
+      pre {
+        margin-top: 16px;
+        padding: 16px;
+        overflow: auto;
+        border-radius: 12px;
+        background: #0d0b0a;
+      }
+    </style>
+  </head>
+  <body>
+    <article>
+      <h1>ttyd stream is not available</h1>
+      <p>${escapeHtml(reason)}</p>
+      <pre>${escapeHtml(JSON.stringify(session.ttyd, null, 2))}</pre>
     </article>
   </body>
 </html>`;

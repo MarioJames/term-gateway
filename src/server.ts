@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 
 import {
   generateOpaqueValue,
@@ -10,8 +11,14 @@ import {
   verifySignedSessionCookie
 } from "./auth.js";
 import { loadConfig } from "./config.js";
-import { renderSessionPage, renderUnauthorizedPage } from "./html.js";
+import { renderSessionPage, renderTtydUnavailablePage, renderUnauthorizedPage } from "./html.js";
 import { SessionRegistry, toSessionView } from "./registry.js";
+import {
+  getTtydTarget,
+  matchStreamRoute,
+  proxyHttpRequest,
+  proxyWebSocketUpgrade
+} from "./ttydProxy.js";
 import type { CreateSessionInput, SessionRecord } from "./types.js";
 
 const config = loadConfig();
@@ -28,6 +35,18 @@ const server = createServer(async (request, response) => {
       error: "internal_server_error",
       message: error instanceof Error ? error.message : "Unexpected error"
     });
+  }
+});
+
+server.on("upgrade", async (request, socket, head) => {
+  try {
+    await handleUpgradeRequest(request, socket, head);
+  } catch (error) {
+    console.error(error);
+    if (!socket.destroyed) {
+      socket.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+    }
   }
 });
 
@@ -93,9 +112,9 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
-  const streamMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/stream$/);
-  if (method === "GET" && streamMatch) {
-    await handleStreamStub(request, response, streamMatch[1]!);
+  const streamRoute = matchStreamRoute(pathname);
+  if (streamRoute) {
+    await handleStreamRequest(request, response, requestUrl, streamRoute);
     return;
   }
 
@@ -160,42 +179,108 @@ async function handleSessionPage(
   }
 
   await registry.touchSessionAccess(session);
-  sendHtml(response, 200, renderSessionPage(session));
+  const ttydTarget = getTtydTarget(session);
+  sendHtml(
+    response,
+    200,
+    renderSessionPage(session, {
+      streamUrl: `/api/sessions/${encodeURIComponent(session.id)}/stream/`,
+      ttydAvailable: ttydTarget.target !== null,
+      ttydStatusMessage:
+        ttydTarget.reason ??
+        `Embedded from ${session.ttyd.upstreamUrl}. The gateway does not add browser-side write controls.`
+    })
+  );
 }
 
-async function handleStreamStub(
+async function handleStreamRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  sessionId: string
+  requestUrl: URL,
+  streamRoute: NonNullable<ReturnType<typeof matchStreamRoute>>
 ): Promise<void> {
-  const session = await authenticateSessionAccess(request, sessionId);
+  const session = await authenticateSessionAccess(request, streamRoute.sessionId);
   if (!session) {
-    sendJson(response, 401, {
-      error: "unauthorized",
-      message: "Open the one-time link first to obtain a valid session cookie"
-    });
+    if (streamRoute.upstreamSuffix === "") {
+      sendHtml(response, 401, renderUnauthorizedPage(streamRoute.sessionId));
+      return;
+    }
+
+    response.statusCode = 401;
+    response.end("Unauthorized");
+    return;
+  }
+
+  if (requestUrl.pathname === `/api/sessions/${session.id}/stream`) {
+    response.statusCode = 307;
+    response.setHeader("Location", `/api/sessions/${encodeURIComponent(session.id)}/stream/`);
+    response.end();
+    return;
+  }
+
+  const ttydTarget = getTtydTarget(session);
+  if (!ttydTarget.target) {
+    if (streamRoute.upstreamSuffix === "") {
+      sendHtml(response, 503, renderTtydUnavailablePage(session, ttydTarget.reason ?? "ttyd is unavailable"));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end("ttyd upstream is unavailable for this session");
+    return;
+  }
+
+  if (streamRoute.upstreamSuffix === "") {
+    await registry.touchSessionAccess(session);
+  }
+
+  await proxyHttpRequest(request, response, ttydTarget.target, requestUrl, streamRoute);
+}
+
+async function handleUpgradeRequest(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+  const requestUrl = new URL(request.url ?? "/", config.publicBaseUrl);
+  const streamRoute = matchStreamRoute(requestUrl.pathname);
+  if (!streamRoute) {
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  const session = await authenticateSessionCookie(streamRoute.sessionId, request.headers.cookie);
+  if (!session) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  const ttydTarget = getTtydTarget(session);
+  if (!ttydTarget.target) {
+    socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+    socket.destroy();
     return;
   }
 
   await registry.touchSessionAccess(session);
-  sendJson(response, 501, {
-    error: "not_implemented",
-    message: "ttyd proxying is still a stub in this MVP",
-    sessionId: session.id,
-    ttyd: session.ttyd
-  });
+  proxyWebSocketUpgrade(request, socket, head, ttydTarget.target, requestUrl, streamRoute);
 }
 
 async function authenticateSessionAccess(
   request: IncomingMessage,
   sessionId: string
 ): Promise<SessionRecord | null> {
+  return authenticateSessionCookie(sessionId, request.headers.cookie);
+}
+
+async function authenticateSessionCookie(
+  sessionId: string,
+  cookieHeader: string | undefined
+): Promise<SessionRecord | null> {
   const session = await registry.getSession(sessionId);
   if (!session) {
     return null;
   }
 
-  const cookies = parseCookieHeader(request.headers.cookie);
+  const cookies = parseCookieHeader(cookieHeader);
   const rawCookie = cookies[config.cookieName];
   if (!rawCookie) {
     return null;

@@ -1,6 +1,6 @@
 # Term Gateway MVP
 
-一个按 `PLAN.md` 实现的第一版只读 Web PTY 观察网关。当前版本专注于本地可运行、可持久化、可通过 one-time token 首次进入，再换成 cookie 继续访问。
+一个按 `PLAN.md` 持续增量实现的只读 Web PTY 观察网关。当前版本已经支持本地持久化、one-time token -> cookie 首访入口，以及在配置了 ttyd upstream 时通过同源代理嵌入真实终端视图。
 
 ## 当前能力
 
@@ -8,8 +8,9 @@
 - 本地文件 session registry
 - `create/list/get/close` 基础 API
 - `GET /open/:id/:token` one-time token -> cookie 入口
-- `GET /s/:id` 只读 terminal 页面占位
-- `GET /api/sessions/:id/stream` ttyd 接入 stub
+- `GET /s/:id` 只读 terminal 页面，可嵌入真实 ttyd 视图
+- `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
+- `ttyd.enabled=false` 或 upstream 未配置时的优雅降级
 
 ## 明确未实现
 
@@ -18,7 +19,7 @@
 - 自动关闭 tmux / ttyd
 - 数据库
 - 网页输入控制
-- 真实 ttyd 反代
+- Cloudflare Tunnel 集成
 
 ## 环境要求
 
@@ -97,7 +98,7 @@ data/
   "agent": "codex",
   "tmuxSession": "codex-rbac-fix",
   "ttyd": {
-    "enabled": false,
+    "enabled": true,
     "port": 7681,
     "upstreamUrl": "http://127.0.0.1:7681"
   }
@@ -116,7 +117,7 @@ data/
     "status": "running",
     "tmuxSession": "codex-rbac-fix",
     "ttyd": {
-      "enabled": false,
+      "enabled": true,
       "port": 7681,
       "upstreamUrl": "http://127.0.0.1:7681"
     },
@@ -155,11 +156,20 @@ data/
 
 ### `GET /s/:id`
 
-只读 terminal 页面占位。必须先通过 `/open/:id/:token` 写 cookie 才能访问。
+只读 terminal 页面。必须先通过 `/open/:id/:token` 写 cookie 才能访问。
+
+- 如果 `ttyd.enabled=true` 且 `upstreamUrl` 可用，页面会通过同源 iframe 嵌入 `/api/sessions/:id/stream/`
+- 如果 ttyd 未启用或 upstream 缺失，页面会降级显示“Terminal unavailable”
+- 当前不实现网页写入控制；产品定位仍是只读观察，输入仍应通过聊天转发
 
 ### `GET /api/sessions/:id/stream`
 
-ttyd 接入 stub。当前返回 `501 Not Implemented`，用于保留未来接反代的位置。
+真实 ttyd 代理入口。
+
+- `GET /api/sessions/:id/stream` 会重定向到带尾斜杠的 `/api/sessions/:id/stream/`
+- `/api/sessions/:id/stream/` 以及其子路径会被代理到 `session.ttyd.upstreamUrl`
+- websocket upgrade 也会通过同一路径转发
+- 如果 ttyd 未启用或 upstream 缺失，根路径会返回可读的 unavailable 页面，子路径返回未接入提示
 
 ## 手工验证示例
 
@@ -184,8 +194,15 @@ curl -i http://127.0.0.1:4317/s/<session_id> \
   -H 'Cookie: term_gateway_session=<cookie-value>'
 ```
 
+如果该 session 配置了 ttyd upstream，也可以直接验证代理根路径：
+
+```bash
+curl -i http://127.0.0.1:4317/api/sessions/<session_id>/stream/ \
+  -H 'Cookie: term_gateway_session=<cookie-value>'
+```
+
 ## 后续建议
 
-- 把 `/api/sessions/:id/stream` 换成真实 ttyd 代理
 - 接入 Cloudflare Tunnel / 独立域名
 - 增加人工确认后的真实关闭能力
+- 如果需要真正的只读约束，再单独评估 ttyd / 前端层的输入限制方案
