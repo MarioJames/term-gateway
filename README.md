@@ -1,6 +1,6 @@
 # Term Gateway MVP
 
-一个按 `PLAN.md` 持续增量实现的只读 Web PTY 观察网关。当前版本已经支持 SQLite 持久化、限时 open token -> cookie 首访入口，以及在配置了 ttyd upstream 时通过同源代理嵌入真实终端视图。
+一个按 `PLAN.md` 持续增量实现的只读 Web PTY 观察网关。当前版本已经支持 SQLite 持久化、限时 open token -> cookie 首访入口，以及由 gateway 自己提供终端观察页面和 tmux 文本桥接。
 
 ## 当前能力
 
@@ -8,18 +8,18 @@
 - SQLite session / token 持久化
 - `create/list/get/close` 基础 API
 - `GET /open/:id/:token` 限时 token -> cookie 入口
-- `GET /s/:id` 极简全屏 terminal 页面，可嵌入真实 ttyd 视图
-- `GET /api/sessions/:id/stream` ttyd HTTP / websocket 同源代理
-- `POST /api/sessions/:id/close` 人工触发的真实 tmux / ttyd 关闭
+- `GET /s/:id` 自控只读 terminal 页面
+- `GET /api/sessions/:id/stream` gateway 自己提供的 tmux snapshot JSON / SSE 桥接
+- `POST /api/sessions/:id/close` 人工触发的真实 tmux 关闭
 - 随仓库分发并由应用自托管的 Web 字体，覆盖 Latin / 简体中文 / Nerd Font 常见符号
 - Cloudflare Tunnel / 反向代理部署文档与示例配置
-- `ttyd.enabled=false` 或 upstream 未配置时的优雅降级
+- 保留现有 session / open 链接体系，页面入口不变
 
 ## 明确未实现
 
 - Cloudflare Access
 - 自动 TTL / 自动清理
-- 自动关闭 tmux / ttyd
+- 自动关闭 tmux
 - 网页输入控制
 
 ## 环境要求
@@ -149,7 +149,7 @@ npm run start
 
 ## Bundled Fonts
 
-为避免依赖访问者本机字体，当前版本会通过 `GET /assets/*` 自托管字体资源，并在页面壳层与注入后的 ttyd HTML 中优先使用同一套字体栈：
+为避免依赖访问者本机字体，当前版本会通过 `GET /assets/*` 自托管字体资源，并在 gateway 自己的终端页面中优先使用同一套字体栈：
 
 - `Sarasa Term SC Nerd`：终端内统一使用的等宽中英文 + Nerd glyph 字体，减少混合字体渲染偏差
 
@@ -181,12 +181,7 @@ data/term-gateway.sqlite
 {
   "taskName": "codex-rbac-fix",
   "agent": "codex",
-  "tmuxSession": "codex-rbac-fix",
-  "ttyd": {
-    "enabled": true,
-    "port": 7681,
-    "upstreamUrl": "http://127.0.0.1:7681"
-  }
+  "tmuxSession": "codex-rbac-fix"
 }
 ```
 
@@ -201,11 +196,6 @@ data/term-gateway.sqlite
     "mode": "readonly",
     "status": "running",
     "tmuxSession": "codex-rbac-fix",
-    "ttyd": {
-      "enabled": true,
-      "port": 7681,
-      "upstreamUrl": "http://127.0.0.1:7681"
-    },
     "createdAt": "2026-03-25T09:00:00.000Z",
     "updatedAt": "2026-03-25T09:00:00.000Z",
     "lastAccessAt": null,
@@ -232,24 +222,15 @@ data/term-gateway.sqlite
 手动触发关闭，并始终把数据库中的 session 状态更新为 `closed`。
 
 - 如果 `tmuxSession` 存在，会尝试执行真实 `tmux kill-session -t <name>`
-- 如果 `ttyd.enabled=true`，会尝试识别并停止本机 ttyd 进程
-- ttyd 只会在“目标可可靠识别”时才会被杀掉；识别不到时会返回 `unsupported` 或 `not_found`
 - 关闭结果会结构化返回，不会因为单项失败把整个请求直接变成 500
 
 结构化结果状态：
 
 - `closed`: 目标已被关闭
 - `not_found`: 没找到对应目标
-- `unsupported`: 当前条件下无法可靠识别目标，因此拒绝猜测性关闭
+- `unsupported`: 当前主机不支持执行关闭动作
 - `skipped`: 当前 session 不需要关闭该类资源
 - `failed`: 已尝试关闭，但执行失败
-
-ttyd 识别策略当前是保守模式：
-
-- upstream 必须是本机地址（`127.0.0.1` / `localhost` / `::1`）
-- 进程名必须能识别为 `ttyd`
-- 命令行里必须能匹配到与 session 配置一致的端口参数（如 `-p 7681`）
-- 如果出现多个候选进程，则返回 `unsupported`
 
 ### `GET /open/:id/:token`
 
@@ -266,19 +247,19 @@ ttyd 识别策略当前是保守模式：
 
 极简全屏 terminal 页面。必须先通过 `/open/:id/:token` 写 cookie 才能访问。
 
-- 如果 `ttyd.enabled=true` 且 `upstreamUrl` 可用，页面会直接以全屏同源 iframe 嵌入 `/api/sessions/:id/stream/`
-- 如果 ttyd 未启用或 upstream 缺失，页面会降级显示“Terminal unavailable”
-- 页面壳层本身不再显示标题、说明、状态卡片等附加 UI，目标是“打开链接就像直接打开终端”
-- 页面壳层和 ttyd iframe 注入层都会优先使用仓库内置字体，不依赖访问者本机 Nerd Font 或中文字体
+- 页面由 term-gateway 自己渲染
+- 页面会通过 `EventSource` 连接 `/api/sessions/:id/stream`，持续接收 tmux 文本快照
+- 浏览器内当前只读，不提供网页输入控制
+- 页面会优先使用仓库内置字体，不依赖访问者本机 Nerd Font 或中文字体
+- 当前目标是优先稳定显示中英文与 box-drawing 字符，而不是完整终端协议仿真
 
 ### `GET /api/sessions/:id/stream`
 
-真实 ttyd 代理入口。
+gateway 自己提供的终端观察桥接入口。
 
-- `GET /api/sessions/:id/stream` 会重定向到带尾斜杠的 `/api/sessions/:id/stream/`
-- `/api/sessions/:id/stream/` 以及其子路径会被代理到 `session.ttyd.upstreamUrl`
-- websocket upgrade 也会通过同一路径转发
-- 如果 ttyd 未启用或 upstream 缺失，根路径会返回可读的 unavailable 页面，子路径返回未接入提示
+- `Accept: text/event-stream` 时返回 SSE，供 `/s/:id` 页面持续接收 tmux 快照
+- 其他普通 `GET` 请求返回单次 JSON snapshot，便于调试和手测
+- 当前 bridge 直接读取 `tmuxSession` 的可见 pane 内容
 
 ## 手工验证示例
 
@@ -310,15 +291,28 @@ curl -i "$BASE_URL/s/<session_id>" \
   -H "Cookie: $COOKIE_NAME=<cookie-value>"
 ```
 
-如果该 session 配置了 ttyd upstream，也可以直接验证代理根路径：
+也可以直接验证单次 snapshot：
 
 ```bash
-curl -i "$BASE_URL/api/sessions/<session_id>/stream/" \
+curl -sS "$BASE_URL/api/sessions/<session_id>/stream" \
   -H "Cookie: $COOKIE_NAME=<cookie-value>"
 ```
+
+验证 SSE：
+
+```bash
+curl -N "$BASE_URL/api/sessions/<session_id>/stream" \
+  -H "Accept: text/event-stream" \
+  -H "Cookie: $COOKIE_NAME=<cookie-value>"
+```
+
+## 迁移说明
+
+- `/open/:id/:token` 和 `/s/:id` 保持不变，现有对外分享链接体系不需要改
+- `/api/sessions/:id/stream` 现在是 gateway 自己的 JSON / SSE 终端桥接
+- 服务启动时会自动把旧版 `sessions` 表迁移为当前 schema，移除废弃的终端代理字段
 
 ## 后续建议
 
 - 接入你自己的 Cloudflare Tunnel / 独立域名
-- 如果需要真正的只读约束，再单独评估 ttyd / 前端层的输入限制方案
-- 如果要让 ttyd close 更可靠，可以在 session 元数据中额外记录受控 pid 或启动元信息
+- 如果要支持颜色、光标和更完整的终端语义，再单独评估自控前端渲染方案

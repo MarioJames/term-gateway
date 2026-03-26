@@ -61,8 +61,8 @@
 - session / token 生成
 - API 提供
 - token 校验与 cookie 签发
-- terminal 页面占位
-- 为后续 ttyd 反代留好接口
+- terminal 页面渲染
+- tmux 文本桥接
 
 ### B. 本地持久化
 使用 SQLite 文件，不上复杂 ORM。
@@ -84,11 +84,6 @@ data/
   "mode": "readonly",
   "status": "running",
   "tmuxSession": "codex-rbac-fix",
-  "ttyd": {
-    "enabled": false,
-    "port": 7681,
-    "upstreamUrl": "http://127.0.0.1:7681"
-  },
   "createdAt": "2026-03-25T09:00:00+08:00",
   "updatedAt": "2026-03-25T09:00:00+08:00",
   "lastAccessAt": null,
@@ -125,17 +120,16 @@ data/
 - `GET /s/:id`
   - 只读 terminal 页面
 
-- `GET /api/sessions/:id/stream` 或占位路由
-  - 未来接 ttyd / proxy
-  - 第一版允许 stub
+- `GET /api/sessions/:id/stream`
+  - 提供单次 JSON snapshot
+  - 支持 SSE 推送 tmux 文本快照
 
 ### E. 页面
 只需要一个简单页面：
 - 展示 session 基本信息
 - 展示当前状态
 - 展示“只读模式”标识
-- 如未接 ttyd，可先放占位文案
-- 如果 ttyd 已可接入，再嵌入 iframe 或代理视图
+- 持续展示 tmux pane 文本快照
 
 ### F. 配置
 提供 `.env.example` 作为主要配置入口，至少包含：
@@ -162,7 +156,7 @@ OPEN_TOKEN_TTL_SECONDS=1800
 
 - Cloudflare Access
 - 自动 TTL 过期
-- 自动清理 tmux / ttyd
+- 自动清理 tmux
 - 完整用户体系
 - 多人权限模型
 - 真正的远程写入控制
@@ -192,27 +186,26 @@ OPEN_TOKEN_TTL_SECONDS=1800
 ### 第 4 步：只读页面
 - `/s/:id` 页面显示会话信息
 - 显示“只读，输入请走聊天”提示
-- ttyd 先接 stub
+- 通过 SSE 拉取 tmux 文本快照
 
-### 第 5 步：ttyd 适配层
-- 把 ttyd upstream 配置位置留出来
-- 第一版可先返回未接入状态
-- 第二版再接真正反代
+### 第 5 步：terminal stream bridge
+- 读取 tmux 可见 pane 内容
+- 提供 JSON / SSE 观察桥接
+- 保留只读访问模型
 
 ### 第 6 步：实现报告
 - 写清已完成项
-- 写清 stub 项
-- 写清接 Cloudflare Tunnel / ttyd 的下一步
+- 写清剩余限制
+- 写清接 Cloudflare Tunnel 的下一步
 
 ---
 
 ## 后续第二阶段
 
 第二阶段再做：
-- 接入真实 ttyd 反代
 - 接入 Cloudflare Tunnel 独立域名（使用自有域名）
 - 增加“每小时提醒用户是否清理 PTY”的调度机制
-- 增加真实关闭能力：kill tmux / kill ttyd
+- 增加真实关闭能力：kill tmux
 - 如果需要，再叠 Cloudflare Access
 
 ---
@@ -235,8 +228,8 @@ OPEN_TOKEN_TTL_SECONDS=1800
 - 有 SQLite-backed session registry
 - 有 create/list/get/close 基础 API
 - 有限时 token -> cookie 的入口
-- 有只读 terminal 页面占位
-- 有 ttyd 接入占位层
+- 有只读 terminal 页面
+- 有 tmux 文本桥接
 - 有 `.env.example`
 - 有实现报告
 - 已完成本地构建或最小运行验证

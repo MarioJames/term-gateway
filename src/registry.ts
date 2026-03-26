@@ -4,9 +4,6 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { CreateSessionInput, SessionRecord, SessionView } from "./types.js";
 
-const DEFAULT_TTYD_PORT = 7681;
-const DEFAULT_TTYD_UPSTREAM = `http://127.0.0.1:${DEFAULT_TTYD_PORT}`;
-
 interface SessionRow {
   id: string;
   task_name: string;
@@ -18,13 +15,52 @@ interface SessionRow {
   updated_at: string;
   last_access_at: string | null;
   public_path: string;
-  ttyd_enabled: number;
-  ttyd_port: number;
-  ttyd_upstream_url: string;
   open_token_hash: string;
   open_token_expires_at: string | null;
   open_token_consumed_at: string | null;
 }
+
+interface TableInfoRow {
+  name: string;
+}
+
+const SESSION_TABLE_COLUMNS = `
+  id TEXT PRIMARY KEY,
+  task_name TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  tmux_session TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_access_at TEXT,
+  public_path TEXT NOT NULL,
+  open_token_hash TEXT NOT NULL,
+  open_token_expires_at TEXT,
+  open_token_consumed_at TEXT
+`;
+
+const SESSION_INSERT_COLUMNS = `
+  id,
+  task_name,
+  agent,
+  mode,
+  status,
+  tmux_session,
+  created_at,
+  updated_at,
+  last_access_at,
+  public_path,
+  open_token_hash,
+  open_token_expires_at,
+  open_token_consumed_at
+`;
+
+const LEGACY_REMOVED_COLUMNS = new Set([
+  "ttyd_enabled",
+  "ttyd_port",
+  "ttyd_upstream_url"
+]);
 
 export class SessionRegistry {
   private database: DatabaseSync | null = null;
@@ -41,24 +77,10 @@ export class SessionRegistry {
     }
 
     this.database = new DatabaseSync(this.databasePath);
+    this.migrateLegacySessionsTableIfNeeded();
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        task_name TEXT NOT NULL,
-        agent TEXT NOT NULL,
-        mode TEXT NOT NULL,
-        status TEXT NOT NULL,
-        tmux_session TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_access_at TEXT,
-        public_path TEXT NOT NULL,
-        ttyd_enabled INTEGER NOT NULL,
-        ttyd_port INTEGER NOT NULL,
-        ttyd_upstream_url TEXT NOT NULL,
-        open_token_hash TEXT NOT NULL,
-        open_token_expires_at TEXT,
-        open_token_consumed_at TEXT
+        ${SESSION_TABLE_COLUMNS}
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions (created_at DESC);
@@ -88,11 +110,6 @@ export class SessionRegistry {
     const taskName = input.taskName?.trim() || "unnamed-task";
     const agent = input.agent?.trim() || "unknown";
     const tmuxSession = input.tmuxSession?.trim() || taskName;
-    const ttyd = {
-      enabled: input.ttyd?.enabled ?? false,
-      port: input.ttyd?.port ?? DEFAULT_TTYD_PORT,
-      upstreamUrl: input.ttyd?.upstreamUrl?.trim() || DEFAULT_TTYD_UPSTREAM
-    };
 
     const session: SessionRecord = {
       id,
@@ -101,7 +118,6 @@ export class SessionRegistry {
       mode: "readonly",
       status: "running",
       tmuxSession,
-      ttyd,
       createdAt: nowIso,
       updatedAt: nowIso,
       lastAccessAt: null,
@@ -121,23 +137,8 @@ export class SessionRegistry {
     this.getDatabase()
       .prepare(`
         INSERT INTO sessions (
-          id,
-          task_name,
-          agent,
-          mode,
-          status,
-          tmux_session,
-          created_at,
-          updated_at,
-          last_access_at,
-          public_path,
-          ttyd_enabled,
-          ttyd_port,
-          ttyd_upstream_url,
-          open_token_hash,
-          open_token_expires_at,
-          open_token_consumed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ${SESSION_INSERT_COLUMNS}
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           task_name = excluded.task_name,
           agent = excluded.agent,
@@ -148,9 +149,6 @@ export class SessionRegistry {
           updated_at = excluded.updated_at,
           last_access_at = excluded.last_access_at,
           public_path = excluded.public_path,
-          ttyd_enabled = excluded.ttyd_enabled,
-          ttyd_port = excluded.ttyd_port,
-          ttyd_upstream_url = excluded.ttyd_upstream_url,
           open_token_hash = excluded.open_token_hash,
           open_token_expires_at = excluded.open_token_expires_at,
           open_token_consumed_at = excluded.open_token_consumed_at
@@ -166,9 +164,6 @@ export class SessionRegistry {
         session.updatedAt,
         session.lastAccessAt,
         session.publicPath,
-        session.ttyd.enabled ? 1 : 0,
-        session.ttyd.port,
-        session.ttyd.upstreamUrl,
         session.openToken.hash,
         session.openToken.expiresAt,
         session.openToken.consumedAt
@@ -181,6 +176,64 @@ export class SessionRegistry {
     session.updatedAt = now;
     await this.saveSession(session);
     return session;
+  }
+
+  private migrateLegacySessionsTableIfNeeded(): void {
+    const database = this.getDatabase();
+    const tableExists = database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sessions'")
+      .get() as { name: string } | undefined;
+
+    if (!tableExists) {
+      return;
+    }
+
+    const columns = database
+      .prepare("SELECT name FROM pragma_table_info('sessions')")
+      .all() as unknown as TableInfoRow[];
+
+    if (!columns.some((column) => LEGACY_REMOVED_COLUMNS.has(column.name))) {
+      return;
+    }
+
+    database.exec("BEGIN IMMEDIATE");
+
+    try {
+      database.exec(`
+        ALTER TABLE sessions RENAME TO sessions_legacy;
+
+        CREATE TABLE sessions (
+          ${SESSION_TABLE_COLUMNS}
+        );
+
+        INSERT INTO sessions (
+          ${SESSION_INSERT_COLUMNS}
+        )
+        SELECT
+          id,
+          task_name,
+          agent,
+          mode,
+          status,
+          tmux_session,
+          created_at,
+          updated_at,
+          last_access_at,
+          public_path,
+          open_token_hash,
+          open_token_expires_at,
+          open_token_consumed_at
+        FROM sessions_legacy;
+
+        DROP TABLE sessions_legacy;
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions (created_at DESC);
+      `);
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private getDatabase(): DatabaseSync {
@@ -200,11 +253,6 @@ function mapSessionRow(row: SessionRow): SessionRecord {
     mode: row.mode as SessionRecord["mode"],
     status: row.status as SessionRecord["status"],
     tmuxSession: row.tmux_session,
-    ttyd: {
-      enabled: row.ttyd_enabled === 1,
-      port: row.ttyd_port,
-      upstreamUrl: row.ttyd_upstream_url
-    },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastAccessAt: row.last_access_at,

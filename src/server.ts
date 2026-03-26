@@ -2,7 +2,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
-import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -16,15 +15,10 @@ import {
 } from "./auth.js";
 import { closeSessionResources } from "./closeSession.js";
 import { loadConfig } from "./config.js";
-import { renderSessionPage, renderTtydUnavailablePage, renderUnauthorizedPage } from "./html.js";
+import { renderSessionPage, renderUnauthorizedPage } from "./html.js";
 import { SessionRegistry, toSessionView } from "./registry.js";
-import {
-  getTtydTarget,
-  matchStreamRoute,
-  proxyHttpRequest,
-  proxyWebSocketUpgrade
-} from "./ttydProxy.js";
-import type { CreateSessionInput, SessionRecord } from "./types.js";
+import { createTerminalNoticeSnapshot, matchTerminalStreamRoute, readTerminalSnapshot } from "./terminalStream.js";
+import type { CreateSessionInput, SessionRecord, TerminalSnapshot, TerminalStreamEvent } from "./types.js";
 
 const config = loadConfig();
 const registry = new SessionRegistry(config.databasePath, config.openTokenTtlSeconds);
@@ -49,18 +43,6 @@ const server = createServer(async (request, response) => {
       error: "internal_server_error",
       message: error instanceof Error ? error.message : "Unexpected error"
     });
-  }
-});
-
-server.on("upgrade", async (request, socket, head) => {
-  try {
-    await handleUpgradeRequest(request, socket, head);
-  } catch (error) {
-    console.error(error);
-    if (!socket.destroyed) {
-      socket.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
-      socket.destroy();
-    }
   }
 });
 
@@ -140,9 +122,9 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
-  const streamRoute = matchStreamRoute(pathname);
-  if (streamRoute) {
-    await handleStreamRequest(request, response, requestUrl, streamRoute);
+  const streamRoute = matchTerminalStreamRoute(pathname);
+  if (method === "GET" && streamRoute) {
+    await handleStreamRequest(request, response, streamRoute.sessionId);
     return;
   }
 
@@ -209,89 +191,34 @@ async function handleSessionPage(
   }
 
   await registry.touchSessionAccess(session);
-  const ttydTarget = getTtydTarget(session);
-  sendHtml(
-    response,
-    200,
-    renderSessionPage(session, {
-      streamUrl: `/api/sessions/${encodeURIComponent(session.id)}/stream/`,
-      ttydAvailable: ttydTarget.target !== null,
-      ttydStatusMessage:
-        ttydTarget.reason ??
-        `Embedded from ${session.ttyd.upstreamUrl}. The gateway does not add browser-side write controls.`
-    })
-  );
+  sendHtml(response, 200, renderSessionPage(session, {
+    streamUrl: `/api/sessions/${encodeURIComponent(session.id)}/stream`
+  }));
 }
 
 async function handleStreamRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  requestUrl: URL,
-  streamRoute: NonNullable<ReturnType<typeof matchStreamRoute>>
+  sessionId: string
 ): Promise<void> {
-  const session = await authenticateSessionAccess(request, streamRoute.sessionId);
+  const session = await authenticateSessionAccess(request, sessionId);
   if (!session) {
-    if (streamRoute.upstreamSuffix === "") {
-      sendHtml(response, 401, renderUnauthorizedPage(streamRoute.sessionId));
-      return;
-    }
-
-    response.statusCode = 401;
-    response.end("Unauthorized");
-    return;
-  }
-
-  if (requestUrl.pathname === `/api/sessions/${session.id}/stream`) {
-    response.statusCode = 307;
-    response.setHeader("Location", `/api/sessions/${encodeURIComponent(session.id)}/stream/`);
-    response.end();
-    return;
-  }
-
-  const ttydTarget = getTtydTarget(session);
-  if (!ttydTarget.target) {
-    if (streamRoute.upstreamSuffix === "") {
-      sendHtml(response, 503, renderTtydUnavailablePage(session, ttydTarget.reason ?? "ttyd is unavailable"));
-      return;
-    }
-
-    response.statusCode = 404;
-    response.end("ttyd upstream is unavailable for this session");
-    return;
-  }
-
-  if (streamRoute.upstreamSuffix === "") {
-    await registry.touchSessionAccess(session);
-  }
-
-  await proxyHttpRequest(request, response, ttydTarget.target, requestUrl, streamRoute);
-}
-
-async function handleUpgradeRequest(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
-  const requestUrl = new URL(request.url ?? "/", config.publicBaseUrl);
-  const streamRoute = matchStreamRoute(requestUrl.pathname);
-  if (!streamRoute) {
-    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
-    socket.destroy();
-    return;
-  }
-
-  const session = await authenticateSessionCookie(streamRoute.sessionId, request.headers.cookie);
-  if (!session) {
-    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-    socket.destroy();
-    return;
-  }
-
-  const ttydTarget = getTtydTarget(session);
-  if (!ttydTarget.target) {
-    socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
-    socket.destroy();
+    sendJson(response, 401, {
+      error: "unauthorized",
+      message: "Session access requires the signed session cookie."
+    });
     return;
   }
 
   await registry.touchSessionAccess(session);
-  proxyWebSocketUpgrade(request, socket, head, ttydTarget.target, requestUrl, streamRoute);
+
+  if (wantsEventStream(request)) {
+    await openTerminalEventStream(request, response, session.id);
+    return;
+  }
+
+  const snapshot = await readTerminalSnapshot(session);
+  sendJson(response, 200, { snapshot });
 }
 
 async function handleStaticAsset(response: ServerResponse, pathname: string, headOnly: boolean): Promise<void> {
@@ -411,6 +338,94 @@ function sendHtml(response: ServerResponse, statusCode: number, html: string): v
   response.end(html);
 }
 
+async function openTerminalEventStream(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sessionId: string
+): Promise<void> {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("Cache-Control", "no-cache, no-transform");
+  response.setHeader("Connection", "keep-alive");
+  response.setHeader("X-Accel-Buffering", "no");
+  response.flushHeaders();
+
+  let sequence = 0;
+  let closed = false;
+  let polling = false;
+  let lastFingerprint = "";
+
+  const cleanup = () => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    clearInterval(pollTimer);
+    clearInterval(heartbeatTimer);
+
+    if (!response.writableEnded) {
+      response.end();
+    }
+  };
+
+  const writeSnapshot = (snapshot: TerminalSnapshot) => {
+    const event: TerminalStreamEvent = {
+      ...snapshot,
+      sequence
+    };
+
+    sequence += 1;
+    lastFingerprint = fingerprintSnapshot(snapshot);
+    response.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  const publishSnapshot = async () => {
+    if (closed || polling) {
+      return;
+    }
+
+    polling = true;
+
+    try {
+      const currentSession = await registry.getSession(sessionId);
+      const snapshot = currentSession
+        ? await readTerminalSnapshot(currentSession)
+        : createTerminalNoticeSnapshot("unavailable", "Session was not found.");
+      const fingerprint = fingerprintSnapshot(snapshot);
+
+      if (sequence === 0 || fingerprint !== lastFingerprint) {
+        writeSnapshot(snapshot);
+      }
+    } catch (error) {
+      const snapshot = createTerminalNoticeSnapshot(
+        "unavailable",
+        error instanceof Error ? error.message : "Unexpected terminal bridge failure."
+      );
+
+      if (sequence === 0 || fingerprintSnapshot(snapshot) !== lastFingerprint) {
+        writeSnapshot(snapshot);
+      }
+    } finally {
+      polling = false;
+    }
+  };
+
+  const pollTimer = setInterval(() => {
+    void publishSnapshot();
+  }, 1_000);
+  const heartbeatTimer = setInterval(() => {
+    if (!closed) {
+      response.write(`: keep-alive ${Date.now()}\n\n`);
+    }
+  }, 15_000);
+
+  request.on("close", cleanup);
+  response.on("close", cleanup);
+
+  await publishSnapshot();
+}
+
 function sendText(response: ServerResponse, statusCode: number, body: string): void {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -423,4 +438,18 @@ function getAssetContentType(assetPath: string): string {
 
 function isPathInsideDirectory(targetPath: string, directoryPath: string): boolean {
   return targetPath === directoryPath || targetPath.startsWith(`${directoryPath}${sep}`);
+}
+
+function wantsEventStream(request: IncomingMessage): boolean {
+  return `${request.headers.accept ?? ""}`.toLowerCase().includes("text/event-stream");
+}
+
+function fingerprintSnapshot(snapshot: TerminalSnapshot): string {
+  return JSON.stringify([
+    snapshot.status,
+    snapshot.message,
+    snapshot.rows,
+    snapshot.cols,
+    snapshot.content
+  ]);
 }

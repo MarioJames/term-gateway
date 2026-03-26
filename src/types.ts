@@ -1,7 +1,17 @@
-export interface TtydConfig {
-  enabled: boolean;
-  port: number;
-  upstreamUrl: string;
+export type TerminalSnapshotStatus = "ok" | "closed" | "unavailable" | "unsupported";
+
+export interface TerminalSnapshot {
+  source: "tmux";
+  status: TerminalSnapshotStatus;
+  message: string | null;
+  content: string;
+  capturedAt: string;
+  rows: number | null;
+  cols: number | null;
+}
+
+export interface TerminalStreamEvent extends TerminalSnapshot {
+  sequence: number;
 }
 
 export type CloseTargetStatus =
@@ -12,16 +22,12 @@ export type CloseTargetStatus =
   | "unsupported";
 
 export interface CloseTargetResult {
-  target: "tmux" | "ttyd";
+  target: "tmux";
   attempted: boolean;
   status: CloseTargetStatus;
   message: string;
   command?: string;
-  pid?: number;
-  signal?: "SIGTERM" | "SIGKILL";
   tmuxSession?: string;
-  port?: number;
-  upstreamUrl?: string;
 }
 
 export interface CloseSessionResult {
@@ -30,7 +36,6 @@ export interface CloseSessionResult {
   registryStatus: "closed";
   registryUpdatedAt: string;
   tmux: CloseTargetResult;
-  ttyd: CloseTargetResult;
   summary: {
     closedAnyTarget: boolean;
     hasFailures: boolean;
@@ -58,7 +63,6 @@ export interface SessionRecord {
   mode: SessionMode;
   status: SessionStatus;
   tmuxSession: string;
-  ttyd: TtydConfig;
   createdAt: string;
   updatedAt: string;
   lastAccessAt: string | null;
@@ -74,5 +78,4 @@ export interface CreateSessionInput {
   taskName?: string;
   agent?: string;
   tmuxSession?: string;
-  ttyd?: Partial<TtydConfig>;
 }
