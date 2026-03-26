@@ -141,6 +141,10 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
     session.status = "closed";
     session.updatedAt = closeResult.registryUpdatedAt;
     await registry.saveSession(session);
+    ptySessionManager.disposeSession(session.id, {
+      reason: "session_closed",
+      message: "Session was closed by the gateway."
+    });
 
     sendJson(response, 200, {
       session: toSessionView(session),

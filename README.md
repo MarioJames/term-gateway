@@ -40,9 +40,18 @@
 - 没有接入 Cloudflare Access、SSO 或完整用户体系
 - 没有自动 TTL 清理、自动关闭 `tmux`、后台任务调度
 - `snapshot` 模式仍然只是文本快照，不是完整终端协议
-- `pty` 模式当前使用仓库内的 Python PTY helper 承载真实 PTY；窗口 resize 还是 best-effort，尚未做完整的动态 winsize 同步
 - 仓库里没有 Dockerfile、CI/CD 工作流、npm 发布配置或正式发行流程
 - `pty` 模式目前仍然围绕现有 `tmuxSession` 工作，不负责启动新的 shell 生命周期
+
+## TODO
+
+- [ ] 给 `pty` 模式补真实浏览器端到端可视化验证，确认实际拖拽窗口后底层 tmux/PTY 布局会即时变化
+- [ ] 把 PTY runtime 的 idle timeout 做成可配置项，而不是代码常量
+- [ ] 增加 runtime 状态查询/诊断能力，便于排查“为什么被回收 / 为什么被重建”
+- [ ] 评估并补充 Python PTY helper 在不同运行环境下的兼容性验证
+- [ ] 视需求决定是否把 `accessMode` 从 `readonly` 扩展到可写，并补输入权限/审计
+- [ ] 如果后续要支持“新开 shell”，把 runtime target 从 `tmuxSession` 抽象成更通用的 terminal target
+- [ ] 增加更完整的端到端自动化测试，覆盖 `open -> cookie`、PTY WebSocket 握手、snapshot/pty 模式切换
 
 ## 技术栈
 

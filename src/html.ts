@@ -354,10 +354,15 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
 
         const socket = new WebSocket(socketUrl);
+        let resizeFrame = 0;
         const sendResize = () => {
           fitAddon.fit();
 
-          if (!terminal.cols || !terminal.rows || socket.readyState !== WebSocket.OPEN) {
+          if (!terminal.cols || !terminal.rows) {
+            return;
+          }
+
+          if (socket.readyState !== WebSocket.OPEN) {
             return;
           }
 
@@ -367,11 +372,37 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
             rows: terminal.rows
           }));
         };
+        const queueResize = () => {
+          if (resizeFrame) {
+            return;
+          }
+
+          resizeFrame = window.requestAnimationFrame(() => {
+            resizeFrame = 0;
+            sendResize();
+          });
+        };
+        const resizeObserver = typeof ResizeObserver === "function"
+          ? new ResizeObserver(() => {
+              queueResize();
+            })
+          : null;
+        const cleanup = () => {
+          if (resizeFrame) {
+            window.cancelAnimationFrame(resizeFrame);
+            resizeFrame = 0;
+          }
+
+          window.removeEventListener("resize", queueResize);
+          resizeObserver && resizeObserver.disconnect();
+          socket.close();
+          terminal.dispose();
+        };
 
         socket.addEventListener("open", () => {
           stateElement.textContent = "live";
           summaryElement.textContent = "Readonly PTY bridge via tmux attach-session";
-          sendResize();
+          queueResize();
         });
 
         socket.addEventListener("message", (event) => {
@@ -386,6 +417,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
 
             if (payload.type === "ready") {
               summaryElement.textContent = payload.message || "Attached to PTY bridge.";
+              queueResize();
               return;
             }
 
@@ -422,10 +454,11 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
           summaryElement.textContent = "PTY websocket failed.";
         });
 
-        window.addEventListener("resize", sendResize);
+        resizeObserver && resizeObserver.observe(screenElement);
+        window.addEventListener("resize", queueResize);
+        queueResize();
         window.addEventListener("beforeunload", () => {
-          socket.close();
-          terminal.dispose();
+          cleanup();
         }, { once: true });
       }
     </script>

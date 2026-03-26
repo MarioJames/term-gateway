@@ -1,9 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 
-import { WebSocket, type RawData } from "ws";
+import { type RawData } from "ws";
 
 import type { SessionRecord } from "./types.js";
 import { getPreferredTmuxCommand } from "./tmux.js";
@@ -11,7 +10,8 @@ import { getPreferredTmuxCommand } from "./tmux.js";
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 const MAX_REPLAY_BYTES = 512 * 1024;
-const IDLE_DISPOSE_DELAY_MS = 10_000;
+const DEFAULT_IDLE_DISPOSE_DELAY_MS = 10_000;
+const WEBSOCKET_OPEN_STATE = 1;
 
 export interface TerminalPtyRouteMatch {
   sessionId: string;
@@ -29,6 +29,8 @@ interface PtyClientMessage {
   data?: string;
 }
 
+export type PtyRuntimeExitReason = "bridge_exit" | "idle_timeout" | "launch_failed" | "session_closed";
+
 interface PtyServerMessage {
   type: "ready" | "output" | "notice" | "exit";
   data?: string;
@@ -36,22 +38,51 @@ interface PtyServerMessage {
   message?: string;
   exitCode?: number | null;
   resizeSupported?: boolean;
+  connections?: number;
+  idleTimeoutMs?: number;
+  reason?: PtyRuntimeExitReason;
+}
+
+export interface PtySocketLike {
+  readyState: number;
+  send(data: string): void;
+  close(): void;
+  on(event: "message", listener: (message: RawData) => void): void;
+  on(event: "close" | "error", listener: () => void): void;
 }
 
 interface PtyClientState {
-  socket: WebSocket;
+  socket: PtySocketLike;
   cols: number;
   rows: number;
 }
 
-interface PtyProcessBridge {
+interface PtyProcessExitEvent {
+  exitCode: number | null;
+  reason: Extract<PtyRuntimeExitReason, "bridge_exit" | "launch_failed">;
+}
+
+export interface PtyProcessBridge {
   readonly resizeSupported: boolean;
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
   onData(listener: (data: string) => void): void;
-  onExit(listener: (event: { exitCode: number | null }) => void): void;
+  onExit(listener: (event: PtyProcessExitEvent) => void): void;
 }
+
+export interface PtySessionManagerOptions {
+  createProcess?: (spawnSpec: PtySpawnSpec, session: SessionRecord) => PtyProcessBridge;
+  idleDisposeDelayMs?: number;
+}
+
+interface PtyDisposeDetails {
+  reason: PtyRuntimeExitReason;
+  message: string;
+  exitCode?: number | null;
+}
+
+type PtyRuntimeState = "live" | "disposing" | "disposed";
 
 export function matchTerminalPtyRoute(pathname: string): TerminalPtyRouteMatch | null {
   const match = pathname.match(/^\/api\/sessions\/([^/]+)\/pty\/?$/);
@@ -73,21 +104,51 @@ export function buildReadonlyTmuxPtySpec(tmuxSession: string): PtySpawnSpec {
 
 export class PtySessionManager {
   private readonly runtimes = new Map<string, PtyRuntime>();
+  private readonly createProcess: (spawnSpec: PtySpawnSpec, session: SessionRecord) => PtyProcessBridge;
+  private readonly idleDisposeDelayMs: number;
 
-  async attachClient(session: SessionRecord, socket: WebSocket): Promise<void> {
+  constructor(options: PtySessionManagerOptions = {}) {
+    this.createProcess = options.createProcess ?? ((spawnSpec) => createPythonPtyProcess(spawnSpec));
+    this.idleDisposeDelayMs = options.idleDisposeDelayMs ?? DEFAULT_IDLE_DISPOSE_DELAY_MS;
+  }
+
+  async attachClient(session: SessionRecord, socket: PtySocketLike): Promise<void> {
+    if (session.status === "closed") {
+      if (socket.readyState === WEBSOCKET_OPEN_STATE) {
+        socket.send(JSON.stringify({
+          type: "exit",
+          reason: "session_closed",
+          message: "Session has already been closed."
+        } satisfies PtyServerMessage));
+      }
+
+      socket.close();
+      return;
+    }
+
     try {
       const runtime = this.getOrCreateRuntime(session);
       runtime.attach(socket);
     } catch (error) {
-      if (socket.readyState === WebSocket.OPEN) {
+      if (socket.readyState === WEBSOCKET_OPEN_STATE) {
         socket.send(JSON.stringify({
           type: "notice",
           message: error instanceof Error ? error.message : "Unable to start PTY bridge."
-        }));
+        } satisfies PtyServerMessage));
       }
 
       socket.close();
     }
+  }
+
+  disposeSession(
+    sessionId: string,
+    details: PtyDisposeDetails = {
+      reason: "session_closed",
+      message: "Session was closed by the gateway."
+    }
+  ): void {
+    this.runtimes.get(sessionId)?.dispose(details);
   }
 
   private getOrCreateRuntime(session: SessionRecord): PtyRuntime {
@@ -96,29 +157,39 @@ export class PtySessionManager {
       return existing;
     }
 
-    const runtime = new PtyRuntime(session, () => {
-      this.runtimes.delete(session.id);
-    });
+    const runtime = new PtyRuntime(
+      session,
+      this.createProcess(buildReadonlyTmuxPtySpec(session.tmuxSession), session),
+      this.idleDisposeDelayMs,
+      () => {
+        this.runtimes.delete(session.id);
+      }
+    );
+
     this.runtimes.set(session.id, runtime);
     return runtime;
   }
 }
 
 class PtyRuntime {
-  private readonly ptyProcess: PtyProcessBridge;
   private readonly clients = new Set<PtyClientState>();
   private replayBuffer = "";
   private lastCols = DEFAULT_COLS;
   private lastRows = DEFAULT_ROWS;
-  private disposeScheduled = false;
+  private idleDisposeTimer: NodeJS.Timeout | null = null;
+  private state: PtyRuntimeState = "live";
 
   constructor(
     private readonly session: SessionRecord,
+    private readonly ptyProcess: PtyProcessBridge,
+    private readonly idleDisposeDelayMs: number,
     private readonly onDispose: () => void
   ) {
-    this.ptyProcess = createPythonPtyProcess(buildReadonlyTmuxPtySpec(session.tmuxSession));
-
     this.ptyProcess.onData((data) => {
+      if (this.state !== "live") {
+        return;
+      }
+
       this.appendReplay(data);
       this.broadcast({
         type: "output",
@@ -126,17 +197,34 @@ class PtyRuntime {
       });
     });
 
-    this.ptyProcess.onExit(({ exitCode }) => {
-      this.broadcast({
-        type: "exit",
+    this.ptyProcess.onExit(({ exitCode, reason }) => {
+      this.dispose({
+        reason,
         exitCode,
-        message: `PTY bridge exited with code ${exitCode ?? "unknown"}.`
-      });
-      this.dispose();
+        message:
+          reason === "launch_failed"
+            ? "PTY bridge failed to launch."
+            : `PTY bridge exited with code ${exitCode ?? "unknown"}.`
+      }, { killProcess: false });
     });
   }
 
-  attach(socket: WebSocket): void {
+  attach(socket: PtySocketLike): void {
+    if (this.state !== "live") {
+      if (socket.readyState === WEBSOCKET_OPEN_STATE) {
+        socket.send(JSON.stringify({
+          type: "exit",
+          reason: "bridge_exit",
+          message: "PTY runtime is no longer available."
+        } satisfies PtyServerMessage));
+      }
+
+      socket.close();
+      return;
+    }
+
+    this.clearIdleDisposeTimer();
+
     const client: PtyClientState = {
       socket,
       cols: this.lastCols,
@@ -144,16 +232,13 @@ class PtyRuntime {
     };
 
     this.clients.add(client);
-    this.disposeScheduled = false;
 
     socket.on("message", (message: RawData) => {
       this.handleClientMessage(client, message);
     });
 
     socket.on("close", () => {
-      this.clients.delete(client);
-      this.recalculateSize();
-      void this.disposeWhenIdle();
+      this.detach(client);
     });
 
     socket.on("error", () => {
@@ -164,9 +249,9 @@ class PtyRuntime {
       type: "ready",
       readonly: this.session.accessMode === "readonly",
       resizeSupported: this.ptyProcess.resizeSupported,
-      message: this.ptyProcess.resizeSupported
-        ? `Attached to tmux session ${this.session.tmuxSession} through a PTY bridge.`
-        : `Attached to tmux session ${this.session.tmuxSession} through a PTY bridge. Resize is currently best-effort.`
+      connections: this.clients.size,
+      idleTimeoutMs: this.idleDisposeDelayMs,
+      message: this.buildReadyMessage()
     });
 
     if (this.replayBuffer) {
@@ -174,6 +259,52 @@ class PtyRuntime {
         type: "output",
         data: this.replayBuffer
       });
+    }
+  }
+
+  dispose(details: PtyDisposeDetails, options: { killProcess?: boolean } = {}): void {
+    if (this.state !== "live") {
+      return;
+    }
+
+    this.state = "disposing";
+    this.clearIdleDisposeTimer();
+
+    if (this.clients.size > 0) {
+      this.broadcast({
+        type: "exit",
+        reason: details.reason,
+        exitCode: details.exitCode ?? null,
+        message: details.message
+      });
+    }
+
+    for (const client of this.clients) {
+      client.socket.close();
+    }
+
+    this.clients.clear();
+
+    if (options.killProcess !== false) {
+      this.ptyProcess.kill();
+    }
+
+    this.state = "disposed";
+    this.onDispose();
+  }
+
+  private detach(client: PtyClientState): void {
+    if (!this.clients.delete(client)) {
+      return;
+    }
+
+    if (this.state !== "live") {
+      return;
+    }
+
+    if (this.clients.size === 0) {
+      this.scheduleIdleDispose();
+      return;
     }
 
     this.recalculateSize();
@@ -193,8 +324,8 @@ class PtyRuntime {
     }
 
     if (payload.type === "resize") {
-      client.cols = sanitizeTerminalSize(payload.cols, DEFAULT_COLS);
-      client.rows = sanitizeTerminalSize(payload.rows, DEFAULT_ROWS);
+      client.cols = sanitizeTerminalSize(payload.cols, this.lastCols);
+      client.rows = sanitizeTerminalSize(payload.rows, this.lastRows);
       this.recalculateSize();
       return;
     }
@@ -215,8 +346,12 @@ class PtyRuntime {
   }
 
   private recalculateSize(): void {
-    const cols = Math.max(...Array.from(this.clients, (client) => client.cols), DEFAULT_COLS);
-    const rows = Math.max(...Array.from(this.clients, (client) => client.rows), DEFAULT_ROWS);
+    if (this.state !== "live" || this.clients.size === 0) {
+      return;
+    }
+
+    const cols = Math.max(...Array.from(this.clients, (client) => client.cols));
+    const rows = Math.max(...Array.from(this.clients, (client) => client.rows));
 
     if (cols === this.lastCols && rows === this.lastRows) {
       return;
@@ -225,6 +360,44 @@ class PtyRuntime {
     this.lastCols = cols;
     this.lastRows = rows;
     this.ptyProcess.resize(cols, rows);
+  }
+
+  private scheduleIdleDispose(): void {
+    if (this.idleDisposeTimer !== null) {
+      return;
+    }
+
+    this.idleDisposeTimer = setTimeout(() => {
+      this.idleDisposeTimer = null;
+
+      if (this.state !== "live" || this.clients.size > 0) {
+        return;
+      }
+
+      this.dispose({
+        reason: "idle_timeout",
+        message: `PTY runtime was reclaimed after ${this.idleDisposeDelayMs}ms with no viewers.`
+      });
+    }, this.idleDisposeDelayMs);
+
+    this.idleDisposeTimer.unref?.();
+  }
+
+  private clearIdleDisposeTimer(): void {
+    if (this.idleDisposeTimer === null) {
+      return;
+    }
+
+    clearTimeout(this.idleDisposeTimer);
+    this.idleDisposeTimer = null;
+  }
+
+  private buildReadyMessage(): string {
+    const resizeSummary = this.ptyProcess.resizeSupported
+      ? "Resize sync is active."
+      : "Resize sync is best-effort only.";
+
+    return `Attached to tmux session ${this.session.tmuxSession} through a PTY bridge. ${resizeSummary} ${this.clients.size} viewer(s) connected. Runtime idles out after ${Math.round(this.idleDisposeDelayMs / 1_000)}s with no viewers.`;
   }
 
   private appendReplay(data: string): void {
@@ -247,38 +420,19 @@ class PtyRuntime {
     }
   }
 
-  private send(socket: WebSocket, message: PtyServerMessage): void {
-    if (socket.readyState !== WebSocket.OPEN) {
+  private send(socket: PtySocketLike, message: PtyServerMessage): void {
+    if (socket.readyState !== WEBSOCKET_OPEN_STATE) {
       return;
     }
 
     socket.send(JSON.stringify(message));
   }
+}
 
-  private async disposeWhenIdle(): Promise<void> {
-    if (this.disposeScheduled || this.clients.size > 0) {
-      return;
-    }
-
-    this.disposeScheduled = true;
-    await delay(IDLE_DISPOSE_DELAY_MS);
-
-    if (this.clients.size === 0) {
-      this.dispose();
-    } else {
-      this.disposeScheduled = false;
-    }
-  }
-
-  private dispose(): void {
-    for (const client of this.clients) {
-      client.socket.close();
-    }
-
-    this.clients.clear();
-    this.ptyProcess.kill();
-    this.onDispose();
-  }
+interface PtyBridgeControlMessage {
+  type: "resize";
+  cols: number;
+  rows: number;
 }
 
 function createPythonPtyProcess(spawnSpec: PtySpawnSpec): PtyProcessBridge {
@@ -295,11 +449,25 @@ function createPythonPtyProcess(spawnSpec: PtySpawnSpec): PtyProcessBridge {
       TERM_GATEWAY_PTY_COLS: `${DEFAULT_COLS}`,
       TERM_GATEWAY_PTY_ROWS: `${DEFAULT_ROWS}`
     },
-    stdio: ["pipe", "pipe", "pipe"]
+    stdio: ["pipe", "pipe", "pipe", "pipe"]
   });
 
+  const controlChannel = child.stdio[3];
+  const resizeSupported = isWritableStream(controlChannel);
   const dataListeners = new Set<(data: string) => void>();
-  const exitListeners = new Set<(event: { exitCode: number | null }) => void>();
+  const exitListeners = new Set<(event: PtyProcessExitEvent) => void>();
+  let exitEmitted = false;
+
+  const emitExit = (event: PtyProcessExitEvent) => {
+    if (exitEmitted) {
+      return;
+    }
+
+    exitEmitted = true;
+    for (const listener of exitListeners) {
+      listener(event);
+    }
+  };
 
   child.stdout.on("data", (chunk: Buffer | string) => {
     const data = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
@@ -316,9 +484,10 @@ function createPythonPtyProcess(spawnSpec: PtySpawnSpec): PtyProcessBridge {
   });
 
   child.on("close", (exitCode) => {
-    for (const listener of exitListeners) {
-      listener({ exitCode });
-    }
+    emitExit({
+      exitCode,
+      reason: "bridge_exit"
+    });
   });
 
   child.on("error", (error) => {
@@ -326,29 +495,48 @@ function createPythonPtyProcess(spawnSpec: PtySpawnSpec): PtyProcessBridge {
       listener(`\r\n[gateway] PTY launch failed: ${error.message}\r\n`);
     }
 
-    for (const listener of exitListeners) {
-      listener({ exitCode: 1 });
-    }
+    emitExit({
+      exitCode: 1,
+      reason: "launch_failed"
+    });
   });
 
   return {
-    resizeSupported: false,
+    resizeSupported,
     write(data: string) {
+      if (typeof data !== "string" || data.length === 0 || !child.stdin.writable) {
+        return;
+      }
+
       child.stdin.write(data);
     },
-    resize() {
-      // The Python PTY helper currently uses the initial size only.
+    resize(cols: number, rows: number) {
+      if (!resizeSupported || controlChannel.destroyed) {
+        return;
+      }
+
+      controlChannel.write(serializeBridgeControlMessage({
+        type: "resize",
+        cols,
+        rows
+      }));
     },
     kill() {
-      child.kill("SIGTERM");
+      if (!child.killed) {
+        child.kill("SIGTERM");
+      }
     },
     onData(listener: (data: string) => void) {
       dataListeners.add(listener);
     },
-    onExit(listener: (event: { exitCode: number | null }) => void) {
+    onExit(listener: (event: PtyProcessExitEvent) => void) {
       exitListeners.add(listener);
     }
   };
+}
+
+function serializeBridgeControlMessage(message: PtyBridgeControlMessage): string {
+  return `${JSON.stringify(message)}\n`;
 }
 
 function sanitizeTerminalSize(value: number | undefined, fallback: number): number {
@@ -370,4 +558,8 @@ function rawDataToString(message: RawData): string {
   }
 
   return Buffer.from(message).toString("utf8");
+}
+
+function isWritableStream(value: unknown): value is NodeJS.WritableStream & { destroyed?: boolean } {
+  return typeof value === "object" && value !== null && typeof (value as NodeJS.WritableStream).write === "function";
 }
