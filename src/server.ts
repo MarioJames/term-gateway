@@ -4,6 +4,8 @@ import { stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { WebSocketServer, type WebSocket } from "ws";
+
 import {
   generateOpaqueValue,
   hashOpenToken,
@@ -16,16 +18,21 @@ import {
 import { closeSessionResources } from "./closeSession.js";
 import { loadConfig } from "./config.js";
 import { renderSessionPage, renderUnauthorizedPage } from "./html.js";
+import { matchTerminalPtyRoute, PtySessionManager } from "./ptySession.js";
 import { SessionRegistry, toSessionView } from "./registry.js";
 import { createTerminalNoticeSnapshot, matchTerminalStreamRoute, readTerminalSnapshot } from "./terminalStream.js";
 import type { CreateSessionInput, SessionRecord, TerminalSnapshot, TerminalStreamEvent } from "./types.js";
+import { resolveVendorAssetPath } from "./vendorAssets.js";
 
 const config = loadConfig();
 const registry = new SessionRegistry(config.databasePath, config.openTokenTtlSeconds);
+const ptySessionManager = new PtySessionManager();
 const assetsRootPath = fileURLToPath(new URL("../assets", import.meta.url));
+const websocketServer = new WebSocketServer({ noServer: true });
 
 const ASSET_CONTENT_TYPES = new Map<string, string>([
   [".css", "text/css; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
   [".ttf", "font/ttf"],
   [".woff", "font/woff"],
   [".woff2", "font/woff2"],
@@ -46,6 +53,41 @@ const server = createServer(async (request, response) => {
   }
 });
 
+server.on("upgrade", async (request, socket, head) => {
+  try {
+    const requestUrl = new URL(request.url ?? "/", config.publicBaseUrl);
+    const ptyRoute = matchTerminalPtyRoute(requestUrl.pathname);
+    if (!ptyRoute) {
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    const session = await authenticateSessionAccess(request, ptyRoute.sessionId);
+    if (!session) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    if (session.mode !== "pty") {
+      socket.write("HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    await registry.touchSessionAccess(session);
+
+    websocketServer.handleUpgrade(request, socket, head, async (websocket: WebSocket) => {
+      await ptySessionManager.attachClient(session, websocket);
+    });
+  } catch (error) {
+    console.error(error);
+    socket.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  }
+});
+
 server.listen(config.port, config.host, () => {
   console.log(`term-gateway listening on ${config.publicBaseUrl}`);
   console.log(`database path: ${config.databasePath}`);
@@ -58,7 +100,7 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
   const pathname = requestUrl.pathname;
 
   if ((method === "GET" || method === "HEAD") && pathname.startsWith("/assets/")) {
-    await handleStaticAsset(response, pathname, method === "HEAD");
+    await handleAssetRequest(response, pathname, method === "HEAD");
     return;
   }
 
@@ -128,6 +170,15 @@ async function routeRequest(request: IncomingMessage, response: ServerResponse):
     return;
   }
 
+  const ptyRoute = matchTerminalPtyRoute(pathname);
+  if (method === "GET" && ptyRoute) {
+    sendJson(response, 426, {
+      error: "upgrade_required",
+      message: "PTY sessions require a WebSocket upgrade."
+    });
+    return;
+  }
+
   sendJson(response, 404, {
     error: "not_found",
     message: `No route for ${method} ${pathname}`
@@ -192,7 +243,8 @@ async function handleSessionPage(
 
   await registry.touchSessionAccess(session);
   sendHtml(response, 200, renderSessionPage(session, {
-    streamUrl: `/api/sessions/${encodeURIComponent(session.id)}/stream`
+    streamUrl: `/api/sessions/${encodeURIComponent(session.id)}/stream`,
+    ptyUrl: `/api/sessions/${encodeURIComponent(session.id)}/pty`
   }));
 }
 
@@ -212,6 +264,14 @@ async function handleStreamRequest(
 
   await registry.touchSessionAccess(session);
 
+  if (session.mode !== "snapshot") {
+    sendJson(response, 409, {
+      error: "mode_conflict",
+      message: "This session uses PTY mode. Connect through the PTY WebSocket endpoint instead."
+    });
+    return;
+  }
+
   if (wantsEventStream(request)) {
     await openTerminalEventStream(request, response, session.id);
     return;
@@ -221,7 +281,13 @@ async function handleStreamRequest(
   sendJson(response, 200, { snapshot });
 }
 
-async function handleStaticAsset(response: ServerResponse, pathname: string, headOnly: boolean): Promise<void> {
+async function handleAssetRequest(response: ServerResponse, pathname: string, headOnly: boolean): Promise<void> {
+  const vendorAssetPath = resolveVendorAssetPath(pathname);
+  if (vendorAssetPath) {
+    await streamAssetFile(response, vendorAssetPath, headOnly);
+    return;
+  }
+
   const relativeAssetPath = decodeURIComponent(pathname.slice("/assets/".length));
   if (!relativeAssetPath || relativeAssetPath.endsWith("/")) {
     sendText(response, 404, "Asset not found");
@@ -234,6 +300,10 @@ async function handleStaticAsset(response: ServerResponse, pathname: string, hea
     return;
   }
 
+  await streamAssetFile(response, assetPath, headOnly);
+}
+
+async function streamAssetFile(response: ServerResponse, assetPath: string, headOnly: boolean): Promise<void> {
   try {
     const assetStats = await stat(assetPath);
     if (!assetStats.isFile()) {

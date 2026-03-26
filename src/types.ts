@@ -53,7 +53,8 @@ export interface SessionOpenTokenView {
   consumedAt: string | null;
 }
 
-export type SessionMode = "readonly";
+export type SessionMode = "snapshot" | "pty";
+export type SessionAccessMode = "readonly";
 export type SessionStatus = "running" | "closed";
 
 export interface SessionRecord {
@@ -61,6 +62,7 @@ export interface SessionRecord {
   taskName: string;
   agent: string;
   mode: SessionMode;
+  accessMode: SessionAccessMode;
   status: SessionStatus;
   tmuxSession: string;
   createdAt: string;
@@ -77,5 +79,7 @@ export interface SessionView extends Omit<SessionRecord, "openToken"> {
 export interface CreateSessionInput {
   taskName?: string;
   agent?: string;
+  mode?: SessionMode;
+  accessMode?: SessionAccessMode;
   tmuxSession?: string;
 }

@@ -1,8 +1,14 @@
 import { TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH } from "./fonts.js";
 import type { SessionRecord } from "./types.js";
+import {
+  XTERM_FIT_ADDON_SCRIPT_PATH,
+  XTERM_SCRIPT_PATH,
+  XTERM_STYLESHEET_PATH
+} from "./vendorAssets.js";
 
 interface SessionPageOptions {
   streamUrl: string;
+  ptyUrl: string;
 }
 
 function escapeHtml(value: string): string {
@@ -21,9 +27,23 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
     agent: session.agent,
     status: session.status,
     mode: session.mode,
+    accessMode: session.accessMode,
     tmuxSession: session.tmuxSession,
-    streamUrl: options.streamUrl
+    streamUrl: options.streamUrl,
+    ptyUrl: options.ptyUrl
   });
+
+  const isPtyMode = session.mode === "pty";
+  const terminalMarkup = isPtyMode
+    ? '<div class="terminal-screen terminal-xterm" id="terminal-screen"></div>'
+    : '<pre class="terminal-screen terminal-pre" id="terminal-screen"></pre>';
+  const runtimeAssets = isPtyMode
+    ? `
+    <link rel="stylesheet" href="${XTERM_STYLESHEET_PATH}" />
+    <script src="${XTERM_SCRIPT_PATH}"></script>
+    <script src="${XTERM_FIT_ADDON_SCRIPT_PATH}"></script>`
+    : "";
+  const sourceLabel = isPtyMode ? `tmux+pty:${escapeHtml(session.tmuxSession)}` : `tmux:${escapeHtml(session.tmuxSession)}`;
 
   return `<!doctype html>
 <html lang="en">
@@ -31,7 +51,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Term Gateway ${escapeHtml(session.id)}</title>
-    <link rel="stylesheet" href="${TERM_FONT_STYLESHEET_PATH}" />
+    <link rel="stylesheet" href="${TERM_FONT_STYLESHEET_PATH}" />${runtimeAssets}
     <style>
       :root {
         color-scheme: dark;
@@ -137,17 +157,23 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
       .terminal-screen {
-        margin: 0;
         min-height: 100%;
-        padding: 16px;
         color: #f2f5f7;
         font-family: ${TERM_FONT_STACK};
         font-size: clamp(13px, 1.4vw, 15px);
         line-height: 1.35;
+      }
+      .terminal-pre {
+        margin: 0;
+        padding: 16px;
         white-space: pre;
         word-break: normal;
         overflow-wrap: normal;
         tab-size: 8;
+      }
+      .terminal-xterm {
+        height: 100%;
+        padding: 12px;
       }
       @supports (height: 100svh) {
         body,
@@ -163,21 +189,22 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         <div class="session-meta">
           <strong class="task-name">${escapeHtml(session.taskName)}</strong>
           <span class="meta-chip">${escapeHtml(session.agent)}</span>
-          <span class="meta-chip">tmux:${escapeHtml(session.tmuxSession)}</span>
+          <span class="meta-chip">${sourceLabel}</span>
         </div>
         <div class="session-badges">
-          <span class="meta-chip">readonly</span>
+          <span class="meta-chip">${escapeHtml(session.mode)}</span>
+          <span class="meta-chip">${escapeHtml(session.accessMode)}</span>
           <span class="status-chip" id="stream-state">connecting</span>
         </div>
       </header>
       <main class="terminal-root">
         <div class="terminal-scroll" id="terminal-scroll">
-          <pre class="terminal-screen" id="terminal-screen"></pre>
+          ${terminalMarkup}
         </div>
       </main>
       <footer class="status-bar">
-        <span id="stream-summary">Connecting to tmux bridge...</span>
-        <span id="stream-updated">Waiting for first snapshot</span>
+        <span id="stream-summary">Connecting to terminal bridge...</span>
+        <span id="stream-updated">Waiting for first update</span>
       </footer>
     </div>
     <script>
@@ -197,30 +224,41 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
           return;
         }
 
-        let lastSequence = -1;
-
-        const isPinnedToBottom = () =>
-          scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight < 24;
-
-        const formatUpdatedAt = (value) => {
+        const setUpdatedAt = (value) => {
           if (!value) {
-            return "Waiting for first snapshot";
+            updatedElement.textContent = "Waiting for first update";
+            return;
           }
 
           const date = new Date(value);
           if (Number.isNaN(date.getTime())) {
-            return "Updated just now";
+            updatedElement.textContent = "Updated just now";
+            return;
           }
 
-          return "Updated " + date.toLocaleTimeString([], {
+          updatedElement.textContent = "Updated " + date.toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
             second: "2-digit"
           });
         };
 
+        if (session.mode === "pty") {
+          startPtyMode(session, screenElement, stateElement, summaryElement, setUpdatedAt);
+          return;
+        }
+
+        startSnapshotMode(session, scrollElement, screenElement, stateElement, summaryElement, setUpdatedAt);
+      })();
+
+      function startSnapshotMode(session, scrollElement, screenElement, stateElement, summaryElement, setUpdatedAt) {
+        let lastSequence = -1;
+
+        const isPinnedToBottom = () =>
+          scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight < 24;
+
         const formatSummary = (payload) => {
-          const parts = ["Readonly browser view", "Source: tmux"];
+          const parts = ["Readonly snapshot bridge", "Source: tmux capture-pane"];
 
           if (payload.cols && payload.rows) {
             parts.push(payload.cols + "x" + payload.rows);
@@ -253,7 +291,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
 
           stateElement.textContent = typeof payload.status === "string" ? payload.status : "live";
           summaryElement.textContent = formatSummary(payload);
-          updatedElement.textContent = formatUpdatedAt(payload.capturedAt);
+          setUpdatedAt(payload.capturedAt);
 
           if (stickToBottom) {
             scrollElement.scrollTop = scrollElement.scrollHeight;
@@ -271,19 +309,125 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
             applySnapshot(JSON.parse(event.data));
           } catch {
             stateElement.textContent = "unavailable";
-            summaryElement.textContent = "Unable to parse stream payload from gateway.";
+            summaryElement.textContent = "Unable to parse snapshot payload from gateway.";
           }
         };
 
         eventSource.onerror = () => {
           stateElement.textContent = "reconnecting";
-          summaryElement.textContent = "Waiting for tmux bridge to reconnect...";
+          summaryElement.textContent = "Waiting for snapshot bridge to reconnect...";
         };
 
         window.addEventListener("beforeunload", () => {
           eventSource.close();
         }, { once: true });
-      })();
+      }
+
+      function startPtyMode(session, screenElement, stateElement, summaryElement, setUpdatedAt) {
+        const TerminalCtor = globalThis.Terminal;
+        const FitAddonCtor = globalThis.FitAddon && globalThis.FitAddon.FitAddon;
+
+        if (typeof TerminalCtor !== "function" || typeof FitAddonCtor !== "function") {
+          stateElement.textContent = "unavailable";
+          summaryElement.textContent = "xterm.js assets are unavailable on this gateway.";
+          return;
+        }
+
+        const terminal = new TerminalCtor({
+          allowTransparency: true,
+          convertEol: false,
+          disableStdin: session.accessMode === "readonly",
+          fontFamily: ${serializeForInlineScript(TERM_FONT_STACK)},
+          fontSize: 14,
+          scrollback: 5000,
+          theme: {
+            background: "#0b0b0b",
+            foreground: "#f2f5f7",
+            cursor: "#f2f5f7"
+          }
+        });
+        const fitAddon = new FitAddonCtor();
+        terminal.loadAddon(fitAddon);
+        terminal.open(screenElement);
+
+        const socketUrl = new URL(session.ptyUrl, window.location.href);
+        socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+
+        const socket = new WebSocket(socketUrl);
+        const sendResize = () => {
+          fitAddon.fit();
+
+          if (!terminal.cols || !terminal.rows || socket.readyState !== WebSocket.OPEN) {
+            return;
+          }
+
+          socket.send(JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows
+          }));
+        };
+
+        socket.addEventListener("open", () => {
+          stateElement.textContent = "live";
+          summaryElement.textContent = "Readonly PTY bridge via tmux attach-session";
+          sendResize();
+        });
+
+        socket.addEventListener("message", (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+
+            if (payload.type === "output" && typeof payload.data === "string") {
+              terminal.write(payload.data);
+              setUpdatedAt(new Date().toISOString());
+              return;
+            }
+
+            if (payload.type === "ready") {
+              summaryElement.textContent = payload.message || "Attached to PTY bridge.";
+              return;
+            }
+
+            if (payload.type === "notice") {
+              summaryElement.textContent = payload.message || "PTY bridge notice";
+              terminal.writeln("");
+              terminal.writeln("[gateway] " + summaryElement.textContent);
+              setUpdatedAt(new Date().toISOString());
+              return;
+            }
+
+            if (payload.type === "exit") {
+              stateElement.textContent = "closed";
+              summaryElement.textContent = payload.message || "PTY bridge exited.";
+              terminal.writeln("");
+              terminal.writeln("[gateway] " + summaryElement.textContent);
+              setUpdatedAt(new Date().toISOString());
+            }
+          } catch {
+            stateElement.textContent = "unavailable";
+            summaryElement.textContent = "Unable to parse PTY payload from gateway.";
+          }
+        });
+
+        socket.addEventListener("close", () => {
+          if (stateElement.textContent !== "closed") {
+            stateElement.textContent = "disconnected";
+            summaryElement.textContent = "PTY websocket disconnected.";
+          }
+        });
+
+        socket.addEventListener("error", () => {
+          stateElement.textContent = "unavailable";
+          summaryElement.textContent = "PTY websocket failed.";
+        });
+
+        window.addEventListener("resize", sendResize);
+        window.addEventListener("beforeunload", () => {
+          socket.close();
+          terminal.dispose();
+        }, { once: true });
+      }
     </script>
   </body>
 </html>`;
@@ -319,40 +463,40 @@ export function renderUnauthorizedPage(sessionId: string): string {
         padding-right: max(16px, env(safe-area-inset-right, 0px));
         padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
         padding-left: max(16px, env(safe-area-inset-left, 0px));
-        background: #111;
-        color: #e8e8e8;
-        font-variant-ligatures: none;
-        font-feature-settings: "liga" 0, "calt" 0;
       }
-      article {
-        max-width: 40rem;
-      }
-      h1, p {
-        margin: 0;
+      .card {
+        width: min(480px, 100%);
+        padding: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.03);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.24);
       }
       h1 {
-        font-size: 1rem;
-        font-weight: 600;
+        margin: 0 0 12px;
+        font-size: 20px;
       }
       p {
-        margin-top: 0.75rem;
+        margin: 0;
         line-height: 1.5;
+        color: #c8d0d7;
       }
-      code { font-family: inherit; }
+      code {
+        font-family: ${TERM_FONT_STACK};
+      }
     </style>
   </head>
   <body>
-    <article>
-      <h1>Session access requires the time-limited open link</h1>
-      <p>Use the original <code>/open/${escapeHtml(sessionId)}/&lt;token&gt;</code> link before it expires so the gateway can exchange it for a signed session cookie.</p>
-    </article>
+    <section class="card">
+      <h1>Unauthorized</h1>
+      <p>
+        Session <code>${escapeHtml(sessionId)}</code> requires a valid signed cookie issued via the open link.
+      </p>
+    </section>
   </body>
 </html>`;
 }
 
 function serializeForInlineScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replaceAll("<", "\\u003c")
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
 }

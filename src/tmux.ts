@@ -18,6 +18,16 @@ const TMUX_CANDIDATES = [
   "tmux"
 ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value as string) === index);
 
+export function getPreferredTmuxCommand(fallback = "tmux"): string {
+  for (const candidate of TMUX_CANDIDATES) {
+    if (!candidate.includes("/") || existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return fallback;
+}
+
 export async function runTmuxCommand(
   args: string[],
   options: { timeoutMs?: number } = {}

@@ -1,8 +1,11 @@
 # term-gateway
 
-`term-gateway` 是一个面向 `tmux` 会话的只读 Web 观察网关。它把本机或服务器上的终端会话登记到 SQLite 中，通过限时 `open` 链接换取签名 cookie，再把 `tmux` 当前可见内容以网页和 SSE 的方式暴露给浏览器查看。
+`term-gateway` 是一个面向 `tmux` 会话的 Web 终端网关。它把本机或服务器上的终端会话登记到 SQLite 中，通过限时 `open` 链接换取签名 cookie，再把会话以两种模式暴露给浏览器：
 
-当前仓库处于 MVP 阶段，重点是先把“可分享、可查看、只读”的路径跑通，而不是做完整的远程终端托管平台。
+- `snapshot`：沿用当前 MVP 的 `tmux capture-pane + JSON/SSE` 文本快照链路
+- `pty`：通过真实 PTY 把 `tmux attach-session -r` 的终端字节流经 WebSocket 送到浏览器里的 `xterm.js`
+
+当前仓库仍处于 MVP 阶段，重点是先把“可分享、可查看、渐进演进到 PTY”的路径跑通，而不是一次性做成完整的远程终端托管平台。
 
 ## 解决什么问题
 
@@ -18,29 +21,39 @@
 
 - SQLite 持久化的 session registry，支持创建、列出、查询和关闭会话
 - `opaque session id + 限时 open token + 签名 cookie` 的访问链路
-- 网关自己渲染只读终端页面，不依赖仓库内的前端框架
-- 从 `tmux capture-pane` 读取文本快照，并通过 JSON / SSE 暴露给浏览器
+- 双模式 session：
+  - `snapshot` 走 `tmux capture-pane` 文本快照和 SSE
+  - `pty` 走 `tmux attach-session -r` + Python PTY helper + WebSocket + `xterm.js`
+- 网关自己渲染终端页面，不依赖仓库内的前端框架
+- `pty` 模式使用 `xterm.js` 渲染 ANSI/alternate screen/cursor 等真实终端字节流
 - 读取 pane 尺寸信息，并在 alternate screen 不可用时自动回退到普通 capture
 - `POST /api/sessions/:id/close` 会尝试执行真实的 `tmux kill-session`，并返回结构化关闭结果
 - 自托管字体与静态资源，覆盖终端页面常见的英文字体、简体中文和 Nerd Font 符号显示
+- 继续兼容现有 open token / signed cookie / session registry 链路，不要求改访问模型
 - 提供 `cloudflared` 示例配置，便于接到 Cloudflare Tunnel 或其他反向代理后使用
 - 启动时会检查并迁移旧版 `sessions` 表中遗留的 `ttyd_*` 字段
+- 启动时会把旧版 `mode=readonly` 记录迁移成 `mode=snapshot + accessMode=readonly`
 
 ## 当前限制
 
-- 浏览器端只读，没有网页输入能力
+- 浏览器端当前仍是只读，没有开放网页输入能力
 - 没有接入 Cloudflare Access、SSO 或完整用户体系
 - 没有自动 TTL 清理、自动关闭 `tmux`、后台任务调度
-- 终端内容来自 `tmux` 文本快照，不是完整终端协议仿真
+- `snapshot` 模式仍然只是文本快照，不是完整终端协议
+- `pty` 模式当前使用仓库内的 Python PTY helper 承载真实 PTY；窗口 resize 还是 best-effort，尚未做完整的动态 winsize 同步
 - 仓库里没有 Dockerfile、CI/CD 工作流、npm 发布配置或正式发行流程
+- `pty` 模式目前仍然围绕现有 `tmuxSession` 工作，不负责启动新的 shell 生命周期
 
 ## 技术栈
 
 - Node.js 24+
 - TypeScript 5
+- Python 3（仅 `pty` 模式需要，用于仓库内 PTY helper）
 - Node 内置模块：`node:http`、`node:sqlite`、`node:crypto`、`node:child_process`
 - `tmux`
 - Server-Sent Events (`EventSource`)
+- WebSocket (`ws`)
+- `xterm.js` + `@xterm/addon-fit`
 - 自托管字体资源
 - Cloudflare Tunnel 示例配置（可选）
 
@@ -51,14 +64,20 @@
 ├── src/
 │   ├── server.ts          # HTTP 服务入口与路由
 │   ├── registry.ts        # SQLite session 持久化与迁移
+│   ├── sessionModel.ts    # snapshot / pty / accessMode 默认值与归一化
 │   ├── auth.ts            # token hash、cookie 签名与校验
 │   ├── terminalStream.ts  # tmux 快照读取与 SSE/JSON 桥接
+│   ├── ptySession.ts      # PTY runtime、WebSocket bridge 与 tmux attach-session
 │   ├── closeSession.ts    # 关闭 tmux session
 │   ├── html.ts            # 只读页面 HTML 输出
+│   ├── vendorAssets.ts    # xterm.js 等前端 vendor 资源映射
 │   ├── fonts.ts           # 终端字体配置
 │   └── *.ts               # 其他类型与辅助模块
+├── scripts/
+│   └── pty_bridge.py      # Python PTY helper，把 tmux attach-session 包进真实 PTY
 ├── assets/fonts/          # 自托管字体与字体许可证
 ├── cloudflared/           # Tunnel 示例配置
+├── docs/pty-mode.md       # PTY 模式架构与当前边界
 ├── data/                  # 默认 SQLite 数据目录
 ├── dist/                  # TypeScript 构建产物
 ├── .env.example           # 环境变量样例
@@ -73,7 +92,9 @@
 - npm
 - `tmux`
 
-如果宿主机没有 `tmux`，服务仍能启动，但终端快照与关闭能力会返回 `unsupported` / `unavailable` 状态。
+如果宿主机没有 `tmux`，服务仍能启动，但终端快照、PTY attach 与关闭能力会返回 `unsupported` / `unavailable` 状态。
+
+如果要使用 `pty` 模式，还需要宿主机有 `python3`，因为当前真实 PTY provider 由仓库内的 [scripts/pty_bridge.py](/Users/wangyahui/workspace/term-gateway/scripts/pty_bridge.py) 承载。
 
 ### 1. 安装依赖并准备配置
 
@@ -112,7 +133,7 @@ npm run start
 ```bash
 curl -sS -X POST http://127.0.0.1:4317/api/sessions \
   -H 'content-type: application/json' \
-  -d '{"taskName":"demo","agent":"codex","tmuxSession":"demo"}'
+  -d '{"taskName":"demo","agent":"codex","tmuxSession":"demo","mode":"snapshot"}'
 ```
 
 返回值里会包含：
@@ -121,6 +142,14 @@ curl -sS -X POST http://127.0.0.1:4317/api/sessions \
 - `openUrl`：限时访问链接，例如 `http://127.0.0.1:4317/open/<id>/<token>`
 
 用浏览器打开 `openUrl` 后，网关会写入签名 cookie 并跳转到 `/s/:id`。
+
+如果要试 `pty` 模式，把请求体改成：
+
+```bash
+curl -sS -X POST http://127.0.0.1:4317/api/sessions \
+  -H 'content-type: application/json' \
+  -d '{"taskName":"demo","agent":"codex","tmuxSession":"demo","mode":"pty"}'
+```
 
 ## 安装与运行
 
@@ -167,13 +196,19 @@ curl -sS -X POST http://127.0.0.1:4317/api/sessions \
 
 创建一个新的只读 session，返回 session 详情和 `openUrl`。
 
+请求体现在支持：
+
+- `mode`: `snapshot` 或 `pty`
+- `accessMode`: 当前固定为 `readonly`，字段已经落库，便于后续演进
+
 请求体示例：
 
 ```json
 {
   "taskName": "demo",
   "agent": "codex",
-  "tmuxSession": "demo"
+  "tmuxSession": "demo",
+  "mode": "pty"
 }
 ```
 
@@ -201,6 +236,25 @@ curl -sS -X POST http://127.0.0.1:4317/api/sessions \
 
 - 普通 `GET`：返回一次性的 JSON 快照
 - `Accept: text/event-stream`：返回 SSE 流，供浏览器持续刷新终端内容
+- 仅适用于 `snapshot` 模式；如果 session 是 `pty` 模式，这个接口会返回 `409 mode_conflict`
+
+### `GET /api/sessions/:id/pty`
+
+- 需要 WebSocket upgrade
+- 仅适用于 `pty` 模式
+- 网关校验现有 signed cookie 后，把 `tmux attach-session -r` 的真实终端字节流转发给浏览器 `xterm.js`
+- 当前客户端协议包含：
+  - client -> server: `resize`, `input`
+  - server -> client: `ready`, `output`, `notice`, `exit`
+
+## 模式演进
+
+当前推荐的演进策略不是替换掉 snapshot，而是双模式并存：
+
+- `snapshot`：保留现有只读 SSE 页面，适合“成本最低、兼容最稳”的观察场景
+- `pty`：用于更接近真实终端协议的页面展示，前端改为 `xterm.js`，后端改为 WebSocket + PTY runtime
+
+更详细的说明见 [docs/pty-mode.md](/Users/wangyahui/workspace/term-gateway/docs/pty-mode.md)。
 
 ## 开发方式
 
