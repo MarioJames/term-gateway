@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import termios
+from typing import Optional
 
 DEFAULT_COLS = int(os.environ.get("TERM_GATEWAY_PTY_COLS", "120"))
 DEFAULT_ROWS = int(os.environ.get("TERM_GATEWAY_PTY_ROWS", "36"))
@@ -191,7 +192,7 @@ def sanitize_terminal_size(value: object, fallback: int) -> int:
     return max(20, min(parsed, 400))
 
 
-def resolve_optional_fd(fd: int) -> int | None:
+def resolve_optional_fd(fd: int) -> Optional[int]:
     try:
         os.fstat(fd)
     except OSError:

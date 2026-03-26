@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -23,6 +25,16 @@ test("buildReadonlyTmuxPtySpec uses readonly tmux attach-session", () => {
     file: "tmux",
     args: ["attach-session", "-r", "-t", "demo"]
   });
+});
+
+test("pty bridge helper starts on the system python3 runtime", () => {
+  const helperPath = fileURLToPath(new URL("../scripts/pty_bridge.py", import.meta.url));
+  const result = spawnSync("python3", [helperPath], {
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 64);
+  assert.match(result.stderr, /usage: pty_bridge\.py <command> \[args\.\.\.\]/);
 });
 
 test("PtySessionManager forwards aggregated resize updates to the PTY bridge", async () => {
