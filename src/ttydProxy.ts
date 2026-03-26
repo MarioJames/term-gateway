@@ -7,8 +7,6 @@ import tls from "node:tls";
 import { TERM_FONT_FAMILY, TERM_FONT_STACK, TERM_FONT_STYLESHEET_PATH, TERM_XTERM_FONT_STACK } from "./fonts.js";
 import type { SessionRecord } from "./types.js";
 
-export const TTYD_PREFERRED_RENDERER_TYPE = "dom";
-
 export interface StreamRouteMatch {
   sessionId: string;
   upstreamSuffix: string;
@@ -60,6 +58,7 @@ body,
 (() => {
   const desiredFontFamily = ${JSON.stringify(TERM_XTERM_FONT_STACK)};
   const terminalFontFamily = ${JSON.stringify(TERM_FONT_FAMILY)};
+  const desiredRendererType = "dom";
   const patchedMarker = Symbol.for("term-gateway.xterm-font-patched");
   const trackedTerminals = new Set();
   let activeTouchId = null;
@@ -74,6 +73,40 @@ body,
     typeof value.open === "function" &&
     value.options &&
     typeof value.options === "object";
+
+  const patchUrlSearchParams = () => {
+    const NativeURLSearchParams = window.URLSearchParams;
+    if (typeof NativeURLSearchParams !== "function" || NativeURLSearchParams[patchedMarker]) {
+      return;
+    }
+
+    const normalizeSearch = (value) => {
+      if (typeof value !== "string") {
+        return null;
+      }
+
+      return value.startsWith("?") ? value.slice(1) : value;
+    };
+
+    const currentSearch = normalizeSearch(window.location.search);
+
+    class PatchedURLSearchParams extends NativeURLSearchParams {
+      constructor(init) {
+        super(init);
+
+        const normalizedInit = init === undefined ? currentSearch : normalizeSearch(init);
+        if (normalizedInit === currentSearch && this.get("rendererType") !== desiredRendererType) {
+          this.set("rendererType", desiredRendererType);
+        }
+      }
+    }
+
+    Object.defineProperty(PatchedURLSearchParams, patchedMarker, {
+      value: true
+    });
+
+    window.URLSearchParams = PatchedURLSearchParams;
+  };
 
   const applyTerminalFont = (terminal) => {
     if (!isTerminalLike(terminal)) {
@@ -314,6 +347,7 @@ body,
     prepareViewport();
   });
 
+  patchUrlSearchParams();
   installTerminalPatch();
   refreshAfterFontsLoad();
   window.addEventListener("resize", queueTerminalRefresh, { passive: true });
