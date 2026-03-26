@@ -6,6 +6,11 @@ const quoteFontFamily = (fontFamily: string): string => `"${fontFamily}"`;
 
 export const TERM_FONT_STACK = [
   quoteFontFamily(TERM_FONT_FAMILY),
+  "ui-monospace",
+  '"SFMono-Regular"',
+  "Menlo",
+  "Consolas",
+  '"Liberation Mono"',
   "monospace"
 ].join(", ");
 

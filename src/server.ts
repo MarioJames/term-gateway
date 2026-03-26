@@ -19,6 +19,7 @@ import { loadConfig } from "./config.js";
 import { renderSessionPage, renderTtydUnavailablePage, renderUnauthorizedPage } from "./html.js";
 import { SessionRegistry, toSessionView } from "./registry.js";
 import {
+  TTYD_PREFERRED_RENDERER_TYPE,
   getTtydTarget,
   matchStreamRoute,
   proxyHttpRequest,
@@ -214,7 +215,7 @@ async function handleSessionPage(
     response,
     200,
     renderSessionPage(session, {
-      streamUrl: `/api/sessions/${encodeURIComponent(session.id)}/stream/`,
+      streamUrl: buildSessionStreamUrl(session.id),
       ttydAvailable: ttydTarget.target !== null,
       ttydStatusMessage:
         ttydTarget.reason ??
@@ -243,7 +244,18 @@ async function handleStreamRequest(
 
   if (requestUrl.pathname === `/api/sessions/${session.id}/stream`) {
     response.statusCode = 307;
-    response.setHeader("Location", `/api/sessions/${encodeURIComponent(session.id)}/stream/`);
+    response.setHeader("Location", buildSessionStreamUrl(session.id));
+    response.end();
+    return;
+  }
+
+  if (
+    streamRoute.upstreamSuffix === "" &&
+    requestUrl.pathname === `/api/sessions/${session.id}/stream/` &&
+    requestUrl.searchParams.get("rendererType") !== TTYD_PREFERRED_RENDERER_TYPE
+  ) {
+    response.statusCode = 307;
+    response.setHeader("Location", buildSessionStreamUrl(session.id, requestUrl.searchParams));
     response.end();
     return;
   }
@@ -415,6 +427,14 @@ function sendText(response: ServerResponse, statusCode: number, body: string): v
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "text/plain; charset=utf-8");
   response.end(body);
+}
+
+function buildSessionStreamUrl(sessionId: string, searchParams?: URLSearchParams): string {
+  const pathname = `/api/sessions/${encodeURIComponent(sessionId)}/stream/`;
+  const params = new URLSearchParams(searchParams);
+  params.set("rendererType", TTYD_PREFERRED_RENDERER_TYPE);
+  const search = params.toString();
+  return search ? `${pathname}?${search}` : pathname;
 }
 
 function getAssetContentType(assetPath: string): string {
