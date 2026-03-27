@@ -43,8 +43,6 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
     <script src="${XTERM_SCRIPT_PATH}"></script>
     <script src="${XTERM_FIT_ADDON_SCRIPT_PATH}"></script>`
     : "";
-  const sourceLabel = isPtyMode ? `tmux+pty:${escapeHtml(session.tmuxSession)}` : `tmux:${escapeHtml(session.tmuxSession)}`;
-
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -56,303 +54,306 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
       :root {
         color-scheme: dark;
         font-family: ${TERM_FONT_STACK};
-        background: #111;
-        color: #e8e8e8;
+        background: #000;
+        color: #f2f5f7;
       }
       * { box-sizing: border-box; }
       html {
         width: 100%;
         height: 100%;
-        background: #111;
+        background: #000;
         overflow: hidden;
         overscroll-behavior: none;
       }
       body {
         margin: 0;
-        width: 100%;
-        min-height: 100vh;
-        min-height: 100dvh;
-        background: #111;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
         overflow: hidden;
         overscroll-behavior: none;
         font-variant-ligatures: none;
         font-feature-settings: "liga" 0, "calt" 0;
       }
-      .app-shell {
+      .terminal-shell {
         position: fixed;
         inset: 0;
-        display: grid;
-        grid-template-rows: auto minmax(0, 1fr) auto;
-        min-height: 100vh;
-        min-height: 100dvh;
-        background:
-          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 120px),
-          #111;
-      }
-      .session-bar,
-      .status-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding-top: max(12px, env(safe-area-inset-top, 0px));
-        padding-right: max(16px, env(safe-area-inset-right, 0px));
-        padding-bottom: 12px;
-        padding-left: max(16px, env(safe-area-inset-left, 0px));
-        background: rgba(17, 17, 17, 0.92);
-        backdrop-filter: blur(12px);
-      }
-      .status-bar {
-        padding-top: 12px;
-        padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        color: #9fa7ad;
-        font-size: 12px;
-      }
-      .session-meta,
-      .session-badges {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-width: 0;
-      }
-      .session-meta {
+        width: 100vw;
+        height: 100vh;
+        background: #000;
         overflow: hidden;
-        flex: 1 1 auto;
       }
-      .session-badges {
-        flex: 0 0 auto;
-      }
-      .task-name {
-        color: #f4f7f9;
-        font-size: 14px;
-        font-weight: 600;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .meta-chip,
-      .status-chip {
-        display: inline-flex;
-        align-items: center;
-        min-height: 28px;
-        padding: 4px 10px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.03);
-        color: #c8d0d7;
-        font-size: 12px;
-        white-space: nowrap;
-      }
-      .source-chip,
-      .status-copy,
-      .updated-copy {
-        min-width: 0;
-      }
-      .source-chip {
-        max-width: min(40vw, 320px);
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .status-chip {
-        text-transform: lowercase;
+      .terminal-root,
+      .terminal-scroll {
+        width: 100%;
+        height: 100%;
       }
       .terminal-root {
-        min-height: 0;
-        padding-top: 10px;
-        padding-bottom: 10px;
-        padding-right: max(16px, env(safe-area-inset-right, 0px));
-        padding-left: max(16px, env(safe-area-inset-left, 0px));
         overflow: hidden;
       }
       .terminal-scroll {
-        height: 100%;
-        min-height: 0;
         overflow: auto;
-        overscroll-behavior: contain;
-        background: #0b0b0b;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 18px;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        overscroll-behavior: none;
+        background: #000;
       }
       .terminal-screen {
+        width: 100%;
         min-height: 100%;
+        background: #000;
         color: #f2f5f7;
         font-family: ${TERM_FONT_STACK};
-        font-size: clamp(13px, 1.4vw, 15px);
+        font-size: clamp(12px, 1.2vw, 14px);
         line-height: 1.35;
       }
       .terminal-pre {
         margin: 0;
-        padding: 16px;
+        padding: 0;
         white-space: pre;
         word-break: normal;
         overflow-wrap: normal;
         tab-size: 8;
       }
-      .terminal-xterm {
+      .terminal-xterm,
+      .terminal-xterm .xterm,
+      .terminal-xterm .xterm-viewport {
+        width: 100%;
         height: 100%;
-        padding: 12px;
+        background: #000;
       }
-      .status-copy {
-        overflow-wrap: anywhere;
+      .terminal-xterm .xterm-screen {
+        width: 100% !important;
       }
-      .updated-copy {
-        flex: 0 0 auto;
-        white-space: nowrap;
-        text-align: right;
+      .terminal-xterm .xterm-helper-textarea {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 1px !important;
+        height: 1px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .terminal-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.84);
+      }
+      .terminal-modal[hidden] {
+        display: none !important;
+      }
+      .terminal-modal-card {
+        width: min(420px, 100%);
+        padding: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: #121212;
+      }
+      .terminal-modal-title {
+        margin: 0 0 10px;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .terminal-modal-copy {
+        margin: 0;
+        color: #c7d0d9;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .terminal-modal-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 20px;
+      }
+      .terminal-modal-button {
+        appearance: none;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: #1e1e1e;
+        color: #f5f7f8;
+        padding: 10px 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .terminal-modal-button:hover {
+        background: #262626;
+      }
+      .terminal-modal-button:focus-visible {
+        outline: 2px solid #8fd3ff;
+        outline-offset: 2px;
       }
       @media (max-width: 720px) {
-        .session-bar,
-        .status-bar {
-          gap: 8px;
-          padding-right: max(12px, env(safe-area-inset-right, 0px));
-          padding-left: max(12px, env(safe-area-inset-left, 0px));
-        }
-        .session-bar {
-          align-items: flex-start;
-          flex-wrap: wrap;
-        }
-        .session-meta,
-        .session-badges {
-          width: 100%;
-          flex-wrap: wrap;
-        }
-        .task-name {
-          width: 100%;
-          white-space: normal;
-          overflow-wrap: anywhere;
-        }
-        .meta-chip,
-        .status-chip {
-          min-height: 24px;
-          padding: 3px 8px;
-          font-size: clamp(11px, 3.2vw, 12px);
-        }
-        .source-chip {
-          max-width: 100%;
-        }
-        .terminal-root {
-          padding-top: 8px;
-          padding-bottom: 8px;
-          padding-right: max(12px, env(safe-area-inset-right, 0px));
-          padding-left: max(12px, env(safe-area-inset-left, 0px));
-        }
-        .terminal-scroll {
-          border-radius: 14px;
-        }
         .terminal-screen {
           font-size: clamp(12px, 3.3vw, 13px);
         }
-        .terminal-pre {
-          padding: 12px;
+        .terminal-modal {
+          padding: 16px;
         }
-        .terminal-xterm {
-          padding: 8px;
+        .terminal-modal-card {
+          padding: 20px;
         }
-        .status-bar {
-          align-items: flex-start;
+        .terminal-modal-actions {
           flex-direction: column;
         }
-        .updated-copy {
-          text-align: left;
+        .terminal-modal-button {
+          width: 100%;
+        }
+      }
+      @supports (height: 100dvh) {
+        body,
+        .terminal-shell {
+          height: 100dvh;
         }
       }
       @supports (height: 100svh) {
         body,
-        .app-shell {
+        .terminal-shell {
           height: 100svh;
         }
       }
     </style>
   </head>
   <body>
-    <div class="app-shell">
-      <header class="session-bar">
-        <div class="session-meta">
-          <strong class="task-name">${escapeHtml(session.taskName)}</strong>
-          <span class="meta-chip">${escapeHtml(session.agent)}</span>
-          <span class="meta-chip source-chip">${sourceLabel}</span>
-        </div>
-        <div class="session-badges">
-          <span class="meta-chip">${escapeHtml(session.mode)}</span>
-          <span class="meta-chip">${escapeHtml(session.accessMode)}</span>
-          <span class="status-chip" id="stream-state">connecting</span>
-        </div>
-      </header>
+    <div class="terminal-shell">
       <main class="terminal-root">
         <div class="terminal-scroll" id="terminal-scroll">
           ${terminalMarkup}
         </div>
       </main>
-      <footer class="status-bar">
-        <span class="status-copy" id="stream-summary">Connecting to terminal bridge...</span>
-        <span class="updated-copy" id="stream-updated">Waiting for first update</span>
-      </footer>
+      <section class="terminal-modal" id="terminal-modal" hidden>
+        <div class="terminal-modal-card" role="alertdialog" aria-modal="true" aria-labelledby="terminal-modal-title">
+          <h1 class="terminal-modal-title" id="terminal-modal-title">Connection lost</h1>
+          <p class="terminal-modal-copy" id="terminal-modal-copy"></p>
+          <div class="terminal-modal-actions">
+            <button class="terminal-modal-button" id="modal-primary-action" type="button">Reconnect terminal</button>
+            <button class="terminal-modal-button" id="modal-secondary-action" type="button">Close page</button>
+          </div>
+        </div>
+      </section>
     </div>
     <script>
       (() => {
         const session = ${pageState};
         const scrollElement = document.getElementById("terminal-scroll");
         const screenElement = document.getElementById("terminal-screen");
-        const stateElement = document.getElementById("stream-state");
-        const summaryElement = document.getElementById("stream-summary");
-        const updatedElement = document.getElementById("stream-updated");
+        const modalElement = document.getElementById("terminal-modal");
+        const modalTitleElement = document.getElementById("terminal-modal-title");
+        const modalCopyElement = document.getElementById("terminal-modal-copy");
+        const modalPrimaryAction = document.getElementById("modal-primary-action");
+        const modalSecondaryAction = document.getElementById("modal-secondary-action");
 
         if (!(scrollElement instanceof HTMLElement) ||
             !(screenElement instanceof HTMLElement) ||
-            !(stateElement instanceof HTMLElement) ||
-            !(summaryElement instanceof HTMLElement) ||
-            !(updatedElement instanceof HTMLElement)) {
+            !(modalElement instanceof HTMLElement) ||
+            !(modalTitleElement instanceof HTMLElement) ||
+            !(modalCopyElement instanceof HTMLElement) ||
+            !(modalPrimaryAction instanceof HTMLButtonElement) ||
+            !(modalSecondaryAction instanceof HTMLButtonElement)) {
           return;
         }
 
+        const closePage = () => {
+          try {
+            window.close();
+          } catch {}
+
+          window.location.replace("about:blank");
+        };
         const setUpdatedAt = (value) => {
-          if (!value) {
-            updatedElement.textContent = "Waiting for first update";
-            return;
-          }
+          scrollElement.dataset.updatedAt = typeof value === "string" ? value : "";
+        };
+        const hideBlockingModal = () => {
+          modalElement.hidden = true;
+          modalPrimaryAction.hidden = true;
+          modalSecondaryAction.hidden = true;
+          modalPrimaryAction.onclick = null;
+          modalSecondaryAction.onclick = null;
+        };
+        function showBlockingModal(config) {
+          modalTitleElement.textContent = config.title;
+          modalCopyElement.textContent = config.message;
 
-          const date = new Date(value);
-          if (Number.isNaN(date.getTime())) {
-            updatedElement.textContent = "Updated just now";
-            return;
-          }
+          modalPrimaryAction.hidden = !config.primaryLabel;
+          modalPrimaryAction.textContent = config.primaryLabel || "";
+          modalPrimaryAction.onclick = typeof config.primaryAction === "function"
+            ? () => {
+                config.primaryAction();
+              }
+            : null;
 
-          updatedElement.textContent = "Updated " + date.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
+          modalSecondaryAction.hidden = !config.secondaryLabel;
+          modalSecondaryAction.textContent = config.secondaryLabel || "";
+          modalSecondaryAction.onclick = typeof config.secondaryAction === "function"
+            ? () => {
+                config.secondaryAction();
+              }
+            : null;
+
+          modalElement.hidden = false;
+        }
+        const showReconnectModal = (message, reconnectAction) => {
+          showBlockingModal({
+            title: "Connection lost",
+            message,
+            primaryLabel: "Reconnect terminal",
+            primaryAction: reconnectAction,
+            secondaryLabel: "Close page",
+            secondaryAction: closePage
+          });
+        };
+        const showSessionClosedModal = (message) => {
+          showBlockingModal({
+            title: "Session unavailable",
+            message,
+            primaryLabel: "Close page",
+            primaryAction: closePage
           });
         };
 
+        let cleanup = () => {};
         if (session.mode === "pty") {
-          startPtyMode(session, screenElement, stateElement, summaryElement, setUpdatedAt);
-          return;
+          cleanup = startPtyMode(
+            session,
+            screenElement,
+            showBlockingModal,
+            showReconnectModal,
+            showSessionClosedModal,
+            hideBlockingModal,
+            closePage,
+            setUpdatedAt
+          );
+        } else {
+          cleanup = startSnapshotMode(
+            session,
+            scrollElement,
+            screenElement,
+            showReconnectModal,
+            showSessionClosedModal,
+            hideBlockingModal,
+            setUpdatedAt
+          );
         }
 
-        startSnapshotMode(session, scrollElement, screenElement, stateElement, summaryElement, setUpdatedAt);
+        window.addEventListener("beforeunload", () => {
+          cleanup();
+        }, { once: true });
       })();
 
-      function startSnapshotMode(session, scrollElement, screenElement, stateElement, summaryElement, setUpdatedAt) {
+      function startSnapshotMode(
+        session,
+        scrollElement,
+        screenElement,
+        showReconnectModal,
+        showSessionClosedModal,
+        hideBlockingModal,
+        setUpdatedAt
+      ) {
         let lastSequence = -1;
+        let eventSource = null;
 
         const isPinnedToBottom = () =>
           scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight < 24;
-
-        const formatSummary = (payload) => {
-          const parts = ["Readonly snapshot bridge", "Source: tmux capture-pane"];
-
-          if (payload.cols && payload.rows) {
-            parts.push(payload.cols + "x" + payload.rows);
-          }
-
-          if (payload.message) {
-            parts.push(payload.message);
-          }
-
-          return parts.join(" • ");
-        };
 
         const applySnapshot = (payload) => {
           if (!payload || typeof payload !== "object") {
@@ -372,48 +373,88 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
             screenElement.textContent = typeof payload.content === "string" ? payload.content : "";
           }
 
-          stateElement.textContent = typeof payload.status === "string" ? payload.status : "live";
-          summaryElement.textContent = formatSummary(payload);
           setUpdatedAt(payload.capturedAt);
+
+          if (payload.status === "closed") {
+            showSessionClosedModal(payload.message || "The terminal session has already been closed.");
+            return;
+          }
+
+          if (payload.status && payload.status !== "ok") {
+            showReconnectModal(
+              payload.message || "The snapshot bridge is unavailable. Reconnect to try again.",
+              reconnect
+            );
+            return;
+          }
+
+          hideBlockingModal();
 
           if (stickToBottom) {
             scrollElement.scrollTop = scrollElement.scrollHeight;
           }
         };
+        const reconnect = () => {
+          if (eventSource) {
+            eventSource.close();
+          }
 
-        const eventSource = new EventSource(session.streamUrl);
+          hideBlockingModal();
+          eventSource = new EventSource(session.streamUrl);
 
-        eventSource.onopen = () => {
-          stateElement.textContent = "live";
+          eventSource.onmessage = (event) => {
+            try {
+              applySnapshot(JSON.parse(event.data));
+            } catch {
+              showReconnectModal(
+                "The snapshot payload could not be parsed. Reconnect to retry the bridge.",
+                reconnect
+              );
+            }
+          };
+
+          eventSource.onerror = () => {
+            if (eventSource) {
+              eventSource.close();
+            }
+
+            showReconnectModal(
+              "The snapshot bridge disconnected. Reconnect to continue viewing this terminal.",
+              reconnect
+            );
+          };
         };
 
-        eventSource.onmessage = (event) => {
-          try {
-            applySnapshot(JSON.parse(event.data));
-          } catch {
-            stateElement.textContent = "unavailable";
-            summaryElement.textContent = "Unable to parse snapshot payload from gateway.";
+        reconnect();
+
+        return () => {
+          if (eventSource) {
+            eventSource.close();
           }
         };
-
-        eventSource.onerror = () => {
-          stateElement.textContent = "reconnecting";
-          summaryElement.textContent = "Waiting for snapshot bridge to reconnect...";
-        };
-
-        window.addEventListener("beforeunload", () => {
-          eventSource.close();
-        }, { once: true });
       }
 
-      function startPtyMode(session, screenElement, stateElement, summaryElement, setUpdatedAt) {
+      function startPtyMode(
+        session,
+        screenElement,
+        showBlockingModal,
+        showReconnectModal,
+        showSessionClosedModal,
+        hideBlockingModal,
+        closePage,
+        setUpdatedAt
+      ) {
         const TerminalCtor = globalThis.Terminal;
         const FitAddonCtor = globalThis.FitAddon && globalThis.FitAddon.FitAddon;
 
         if (typeof TerminalCtor !== "function" || typeof FitAddonCtor !== "function") {
-          stateElement.textContent = "unavailable";
-          summaryElement.textContent = "xterm.js assets are unavailable on this gateway.";
-          return;
+          showBlockingModal({
+            title: "Terminal unavailable",
+            message: "xterm.js assets are unavailable on this gateway.",
+            primaryLabel: "Close page",
+            primaryAction: closePage
+          });
+          return () => {};
         }
 
         const pickTerminalFontSize = () => {
@@ -432,12 +473,13 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         const terminal = new TerminalCtor({
           allowTransparency: true,
           convertEol: false,
-          disableStdin: session.accessMode === "readonly",
+          disableStdin: true,
+          customKeyEventHandler: () => false,
           fontFamily: ${serializeForInlineScript(TERM_FONT_STACK)},
           fontSize: pickTerminalFontSize(),
           scrollback: 5000,
           theme: {
-            background: "#0b0b0b",
+            background: "#000",
             foreground: "#f2f5f7",
             cursor: "#f2f5f7"
           }
@@ -446,12 +488,61 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         terminal.loadAddon(fitAddon);
         terminal.open(screenElement);
 
+        const hardenTerminalInput = () => {
+          const helperTextarea = screenElement.querySelector("textarea");
+
+          if (!(helperTextarea instanceof HTMLTextAreaElement)) {
+            return;
+          }
+
+          helperTextarea.readOnly = true;
+          helperTextarea.tabIndex = -1;
+          helperTextarea.setAttribute("aria-hidden", "true");
+          helperTextarea.setAttribute("autocapitalize", "off");
+          helperTextarea.setAttribute("autocomplete", "off");
+          helperTextarea.setAttribute("autocorrect", "off");
+          helperTextarea.setAttribute("inputmode", "none");
+          helperTextarea.blur();
+        };
+        const suppressTerminalFocus = () => {
+          const activeElement = document.activeElement;
+
+          if (activeElement instanceof HTMLElement && screenElement.contains(activeElement)) {
+            activeElement.blur();
+          }
+
+          terminal.blur();
+          hardenTerminalInput();
+        };
+        const blockTerminalPointerFocus = (event) => {
+          if (event.cancelable) {
+            event.preventDefault();
+          }
+
+          suppressTerminalFocus();
+        };
+        screenElement.addEventListener("click", blockTerminalPointerFocus, { capture: true });
+        screenElement.addEventListener("pointerdown", blockTerminalPointerFocus, { capture: true });
+        screenElement.addEventListener("mousedown", blockTerminalPointerFocus, { capture: true });
+        screenElement.addEventListener("touchstart", blockTerminalPointerFocus, { capture: true, passive: false });
+        screenElement.addEventListener("focusin", () => {
+          suppressTerminalFocus();
+        }, true);
+        hardenTerminalInput();
+        suppressTerminalFocus();
+
         const socketUrl = new URL(session.ptyUrl, window.location.href);
         socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
 
-        const socket = new WebSocket(socketUrl);
+        let socket = null;
         let resizeFrame = 0;
+        let disposed = false;
+        let closeHandled = false;
         const sendResize = () => {
+          if (disposed) {
+            return;
+          }
+
           const nextFontSize = pickTerminalFontSize();
           if (terminal.options.fontSize !== nextFontSize) {
             terminal.options.fontSize = nextFontSize;
@@ -463,7 +554,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
             return;
           }
 
-          if (socket.readyState !== WebSocket.OPEN) {
+          if (!(socket instanceof WebSocket) || socket.readyState !== WebSocket.OPEN) {
             return;
           }
 
@@ -490,6 +581,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
           : null;
         const viewport = window.visualViewport;
         const cleanup = () => {
+          disposed = true;
+
           if (resizeFrame) {
             window.cancelAnimationFrame(resizeFrame);
             resizeFrame = 0;
@@ -499,73 +592,110 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
           viewport && viewport.removeEventListener("resize", queueResize);
           viewport && viewport.removeEventListener("scroll", queueResize);
           resizeObserver && resizeObserver.disconnect();
-          socket.close();
+
+          if (socket instanceof WebSocket) {
+            socket.close();
+          }
+
           terminal.dispose();
         };
-
-        socket.addEventListener("open", () => {
-          stateElement.textContent = "live";
-          summaryElement.textContent = "Readonly PTY bridge via tmux attach-session";
-          queueResize();
-        });
-
-        socket.addEventListener("message", (event) => {
-          try {
-            const payload = JSON.parse(event.data);
-
-            if (payload.type === "output" && typeof payload.data === "string") {
-              terminal.write(payload.data);
-              setUpdatedAt(new Date().toISOString());
-              return;
-            }
-
-            if (payload.type === "ready") {
-              summaryElement.textContent = payload.message || "Attached to PTY bridge.";
-              queueResize();
-              return;
-            }
-
-            if (payload.type === "notice") {
-              summaryElement.textContent = payload.message || "PTY bridge notice";
-              terminal.writeln("");
-              terminal.writeln("[gateway] " + summaryElement.textContent);
-              setUpdatedAt(new Date().toISOString());
-              return;
-            }
-
-            if (payload.type === "exit") {
-              stateElement.textContent = "closed";
-              summaryElement.textContent = payload.message || "PTY bridge exited.";
-              terminal.writeln("");
-              terminal.writeln("[gateway] " + summaryElement.textContent);
-              setUpdatedAt(new Date().toISOString());
-            }
-          } catch {
-            stateElement.textContent = "unavailable";
-            summaryElement.textContent = "Unable to parse PTY payload from gateway.";
+        const connect = () => {
+          if (disposed) {
+            return;
           }
-        });
 
-        socket.addEventListener("close", () => {
-          if (stateElement.textContent !== "closed") {
-            stateElement.textContent = "disconnected";
-            summaryElement.textContent = "PTY websocket disconnected.";
+          if (socket instanceof WebSocket && socket.readyState === WebSocket.OPEN) {
+            return;
           }
-        });
 
-        socket.addEventListener("error", () => {
-          stateElement.textContent = "unavailable";
-          summaryElement.textContent = "PTY websocket failed.";
-        });
+          closeHandled = false;
+          hideBlockingModal();
+          socket = new WebSocket(socketUrl);
+
+          socket.addEventListener("open", () => {
+            hideBlockingModal();
+            hardenTerminalInput();
+            suppressTerminalFocus();
+            queueResize();
+          });
+
+          socket.addEventListener("message", (event) => {
+            try {
+              const payload = JSON.parse(event.data);
+
+              if (payload.type === "output" && typeof payload.data === "string") {
+                terminal.write(payload.data);
+                setUpdatedAt(new Date().toISOString());
+                return;
+              }
+
+              if (payload.type === "ready") {
+                hideBlockingModal();
+                queueResize();
+                return;
+              }
+
+              if (payload.type === "notice") {
+                setUpdatedAt(new Date().toISOString());
+                return;
+              }
+
+              if (payload.type === "exit") {
+                closeHandled = true;
+                setUpdatedAt(new Date().toISOString());
+
+                if (payload.reason === "session_closed" || payload.reason === "launch_failed") {
+                  showSessionClosedModal(payload.message || "The PTY session is no longer available.");
+                } else {
+                  showReconnectModal(
+                    payload.message || "The PTY bridge exited. Reconnect to continue.",
+                    connect
+                  );
+                }
+
+                if (socket instanceof WebSocket) {
+                  socket.close();
+                }
+              }
+            } catch {
+              closeHandled = true;
+              showReconnectModal(
+                "The PTY payload could not be parsed. Reconnect to continue.",
+                connect
+              );
+            }
+          });
+
+          socket.addEventListener("close", () => {
+            if (disposed || closeHandled) {
+              return;
+            }
+
+            showReconnectModal(
+              "The PTY websocket disconnected. Reconnect to continue using this terminal.",
+              connect
+            );
+          });
+
+          socket.addEventListener("error", () => {
+            if (disposed) {
+              return;
+            }
+
+            showReconnectModal(
+              "The PTY websocket failed. Reconnect to continue using this terminal.",
+              connect
+            );
+          });
+        };
 
         resizeObserver && resizeObserver.observe(screenElement);
         window.addEventListener("resize", queueResize);
         viewport && viewport.addEventListener("resize", queueResize);
         viewport && viewport.addEventListener("scroll", queueResize);
         queueResize();
-        window.addEventListener("beforeunload", () => {
-          cleanup();
-        }, { once: true });
+        connect();
+        return cleanup;
       }
     </script>
   </body>
