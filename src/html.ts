@@ -82,7 +82,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         position: fixed;
         inset: 0;
         display: grid;
-        grid-template-rows: auto 1fr auto;
+        grid-template-rows: auto minmax(0, 1fr) auto;
         min-height: 100vh;
         min-height: 100dvh;
         background:
@@ -118,12 +118,18 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
       }
       .session-meta {
         overflow: hidden;
+        flex: 1 1 auto;
+      }
+      .session-badges {
+        flex: 0 0 auto;
       }
       .task-name {
         color: #f4f7f9;
         font-size: 14px;
         font-weight: 600;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .meta-chip,
       .status-chip {
@@ -138,17 +144,30 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         font-size: 12px;
         white-space: nowrap;
       }
+      .source-chip,
+      .status-copy,
+      .updated-copy {
+        min-width: 0;
+      }
+      .source-chip {
+        max-width: min(40vw, 320px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .status-chip {
         text-transform: lowercase;
       }
       .terminal-root {
         min-height: 0;
+        padding-top: 10px;
+        padding-bottom: 10px;
         padding-right: max(16px, env(safe-area-inset-right, 0px));
         padding-left: max(16px, env(safe-area-inset-left, 0px));
         overflow: hidden;
       }
       .terminal-scroll {
         height: 100%;
+        min-height: 0;
         overflow: auto;
         overscroll-behavior: contain;
         background: #0b0b0b;
@@ -175,6 +194,70 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         height: 100%;
         padding: 12px;
       }
+      .status-copy {
+        overflow-wrap: anywhere;
+      }
+      .updated-copy {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        text-align: right;
+      }
+      @media (max-width: 720px) {
+        .session-bar,
+        .status-bar {
+          gap: 8px;
+          padding-right: max(12px, env(safe-area-inset-right, 0px));
+          padding-left: max(12px, env(safe-area-inset-left, 0px));
+        }
+        .session-bar {
+          align-items: flex-start;
+          flex-wrap: wrap;
+        }
+        .session-meta,
+        .session-badges {
+          width: 100%;
+          flex-wrap: wrap;
+        }
+        .task-name {
+          width: 100%;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .meta-chip,
+        .status-chip {
+          min-height: 24px;
+          padding: 3px 8px;
+          font-size: clamp(11px, 3.2vw, 12px);
+        }
+        .source-chip {
+          max-width: 100%;
+        }
+        .terminal-root {
+          padding-top: 8px;
+          padding-bottom: 8px;
+          padding-right: max(12px, env(safe-area-inset-right, 0px));
+          padding-left: max(12px, env(safe-area-inset-left, 0px));
+        }
+        .terminal-scroll {
+          border-radius: 14px;
+        }
+        .terminal-screen {
+          font-size: clamp(12px, 3.3vw, 13px);
+        }
+        .terminal-pre {
+          padding: 12px;
+        }
+        .terminal-xterm {
+          padding: 8px;
+        }
+        .status-bar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .updated-copy {
+          text-align: left;
+        }
+      }
       @supports (height: 100svh) {
         body,
         .app-shell {
@@ -189,7 +272,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         <div class="session-meta">
           <strong class="task-name">${escapeHtml(session.taskName)}</strong>
           <span class="meta-chip">${escapeHtml(session.agent)}</span>
-          <span class="meta-chip">${sourceLabel}</span>
+          <span class="meta-chip source-chip">${sourceLabel}</span>
         </div>
         <div class="session-badges">
           <span class="meta-chip">${escapeHtml(session.mode)}</span>
@@ -203,8 +286,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         </div>
       </main>
       <footer class="status-bar">
-        <span id="stream-summary">Connecting to terminal bridge...</span>
-        <span id="stream-updated">Waiting for first update</span>
+        <span class="status-copy" id="stream-summary">Connecting to terminal bridge...</span>
+        <span class="updated-copy" id="stream-updated">Waiting for first update</span>
       </footer>
     </div>
     <script>
@@ -333,12 +416,25 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
           return;
         }
 
+        const pickTerminalFontSize = () => {
+          const width = Math.min(window.innerWidth || 0, screen.width || Number.POSITIVE_INFINITY);
+
+          if (width <= 480) {
+            return 12;
+          }
+
+          if (width <= 720) {
+            return 13;
+          }
+
+          return 14;
+        };
         const terminal = new TerminalCtor({
           allowTransparency: true,
           convertEol: false,
           disableStdin: session.accessMode === "readonly",
           fontFamily: ${serializeForInlineScript(TERM_FONT_STACK)},
-          fontSize: 14,
+          fontSize: pickTerminalFontSize(),
           scrollback: 5000,
           theme: {
             background: "#0b0b0b",
@@ -356,6 +452,11 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
         const socket = new WebSocket(socketUrl);
         let resizeFrame = 0;
         const sendResize = () => {
+          const nextFontSize = pickTerminalFontSize();
+          if (terminal.options.fontSize !== nextFontSize) {
+            terminal.options.fontSize = nextFontSize;
+          }
+
           fitAddon.fit();
 
           if (!terminal.cols || !terminal.rows) {
@@ -387,6 +488,7 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
               queueResize();
             })
           : null;
+        const viewport = window.visualViewport;
         const cleanup = () => {
           if (resizeFrame) {
             window.cancelAnimationFrame(resizeFrame);
@@ -394,6 +496,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
           }
 
           window.removeEventListener("resize", queueResize);
+          viewport && viewport.removeEventListener("resize", queueResize);
+          viewport && viewport.removeEventListener("scroll", queueResize);
           resizeObserver && resizeObserver.disconnect();
           socket.close();
           terminal.dispose();
@@ -456,6 +560,8 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
 
         resizeObserver && resizeObserver.observe(screenElement);
         window.addEventListener("resize", queueResize);
+        viewport && viewport.addEventListener("resize", queueResize);
+        viewport && viewport.addEventListener("scroll", queueResize);
         queueResize();
         window.addEventListener("beforeunload", () => {
           cleanup();
