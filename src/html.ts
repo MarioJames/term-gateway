@@ -404,7 +404,12 @@ export function renderSessionPage(session: SessionRecord, options: SessionPageOp
 
           eventSource.onmessage = (event) => {
             try {
-              applySnapshot(JSON.parse(event.data));
+              const payload = JSON.parse(event.data);
+              // 跳过已处理的序列号，避免重复渲染
+              if (typeof payload.sequence === "number" && payload.sequence <= lastSequence) {
+                return;
+              }
+              applySnapshot(payload);
             } catch {
               showReconnectModal(
                 "The snapshot payload could not be parsed. Reconnect to retry the bridge.",
